@@ -8,16 +8,18 @@
 ## Overview
 ZipVoice is a high-quality zero-shot TTS model with a small model size and fast inference speed.
 
-<center> Model Structure </center>
-![](https://zipvoice.github.io/pics/zipvoice.png)
 
-#### Key features:
+### Key features:
 
 - Small and fast: only 123M parameters.
 
 - High-quality: state-of-the-art voice cloning performance in speaker similarity, intelligibility, and naturalness.
 
 - Multi-lingual: support Chinese and English.
+
+### Architecture
+
+![](https://zipvoice.github.io/pics/zipvoice.png)
 
 
 
@@ -407,9 +409,9 @@ on three test sets, i.e., LibriSpeech-PC test-clean, Seed-TTS test-en and Seed-T
 
 ## Discussion & Communication
 
-You can directly discuss on [Github Issues]().
+You can directly discuss on [Github Issues](https://github.com/k2-fsa/ZipVoice/issues).
 
-You can also scan the QR code to join our wechat group and follow our wechat official account.
+You can also scan the QR code to join our wechat group or follow our wechat official account.
 
 | Wechat Group | Wechat Official Account |
 | ------------ | ----------------------- |

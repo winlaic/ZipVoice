@@ -1,4 +1,4 @@
-# Copyright  2021-2022  Xiaomi Corporation  (authors: Fangjun Kuang,
+# Copyright  2021-2025  Xiaomi Corporation  (authors: Fangjun Kuang,
 #                                                     Zengwei Yao)
 #
 # See ../../LICENSE for clarification regarding multiple authors
@@ -140,3 +140,269 @@ def load_checkpoint(
         checkpoint.pop("model_ema")
 
     return checkpoint
+
+
+def find_checkpoints(out_dir: Path, iteration: int = 0) -> List[str]:
+    """Find all available checkpoints in a directory.
+
+    The checkpoint filenames have the form: `checkpoint-xxx.pt`
+    where xxx is a numerical value.
+
+    Assume you have the following checkpoints in the folder `foo`:
+
+        - checkpoint-1.pt
+        - checkpoint-20.pt
+        - checkpoint-300.pt
+        - checkpoint-4000.pt
+
+    Case 1 (Return all checkpoints)::
+
+      find_checkpoints(out_dir='foo')
+
+    Case 2 (Return checkpoints newer than checkpoint-20.pt, i.e.,
+    checkpoint-4000.pt, checkpoint-300.pt, and checkpoint-20.pt)
+
+        find_checkpoints(out_dir='foo', iteration=20)
+
+    Case 3 (Return checkpoints older than checkpoint-20.pt, i.e.,
+    checkpoint-20.pt, checkpoint-1.pt)::
+
+        find_checkpoints(out_dir='foo', iteration=-20)
+
+    Args:
+      out_dir:
+        The directory where to search for checkpoints.
+      iteration:
+        If it is 0, return all available checkpoints.
+        If it is positive, return the checkpoints whose iteration number is
+        greater than or equal to `iteration`.
+        If it is negative, return the checkpoints whose iteration number is
+        less than or equal to `-iteration`.
+    Returns:
+      Return a list of checkpoint filenames, sorted in descending
+      order by the numerical value in the filename.
+    """
+    checkpoints = list(glob.glob(f"{out_dir}/checkpoint-[0-9]*.pt"))
+    pattern = re.compile(r"checkpoint-([0-9]+).pt")
+    iter_checkpoints = []
+    for c in checkpoints:
+        result = pattern.search(c)
+        if not result:
+            logging.warn(f"Invalid checkpoint filename {c}")
+            continue
+
+        iter_checkpoints.append((int(result.group(1)), c))
+
+    # iter_checkpoints is a list of tuples. Each tuple contains
+    # two elements: (iteration_number, checkpoint-iteration_number.pt)
+
+    iter_checkpoints = sorted(
+        iter_checkpoints, reverse=True, key=lambda x: x[0]
+    )
+    if iteration >= 0:
+        ans = [ic[1] for ic in iter_checkpoints if ic[0] >= iteration]
+    else:
+        ans = [ic[1] for ic in iter_checkpoints if ic[0] <= -iteration]
+
+    return ans
+
+
+def average_checkpoints_with_averaged_model(
+    filename_start: str,
+    filename_end: str,
+    device: torch.device = torch.device("cpu"),
+) -> Dict[str, Tensor]:
+    """Average model parameters over the range with given
+    start model (excluded) and end model.
+
+    Let start = batch_idx_train of model-start;
+        end = batch_idx_train of model-end;
+        interval = end - start.
+    Then the average model over range from start (excluded) to end is
+    (1) avg = (model_end * end - model_start * start) / interval.
+    It can be written as
+    (2) avg = model_end * weight_end + model_start * weight_start,
+        where weight_end = end / interval,
+              weight_start = -start / interval = 1 - weight_end.
+    Since the terms `weight_end` and `weight_start` would be large
+    if the model has been trained for lots of batches, which would cause
+    overflow when multiplying the model parameters.
+    To avoid this, we rewrite (2) as:
+    (3) avg = (model_end + model_start * (weight_start / weight_end))
+              * weight_end
+
+    The model index could be epoch number or iteration number.
+
+    Args:
+      filename_start:
+        Checkpoint filename of the start model. We assume it
+        is saved by :func:`save_checkpoint`.
+      filename_end:
+        Checkpoint filename of the end model. We assume it
+        is saved by :func:`save_checkpoint`.
+      device:
+        Move checkpoints to this device before averaging.
+    """
+    state_dict_start = torch.load(filename_start, map_location=device)
+    state_dict_end = torch.load(filename_end, map_location=device)
+
+    average_period = state_dict_start["average_period"]
+
+    batch_idx_train_start = state_dict_start["batch_idx_train"]
+    batch_idx_train_start = (
+        batch_idx_train_start // average_period
+    ) * average_period
+    batch_idx_train_end = state_dict_end["batch_idx_train"]
+    batch_idx_train_end = (
+        batch_idx_train_end // average_period
+    ) * average_period
+    interval = batch_idx_train_end - batch_idx_train_start
+    assert interval > 0, interval
+    weight_end = batch_idx_train_end / interval
+    weight_start = 1 - weight_end
+
+    model_end = state_dict_end["model_avg"]
+    model_start = state_dict_start["model_avg"]
+    avg = model_end
+
+    # scale the weight to avoid overflow
+    average_state_dict(
+        state_dict_1=avg,
+        state_dict_2=model_start,
+        weight_1=1.0,
+        weight_2=weight_start / weight_end,
+        scaling_factor=weight_end,
+    )
+
+    return avg
+
+
+def remove_checkpoints(
+    out_dir: Path,
+    topk: int,
+    rank: int = 0,
+):
+    """Remove checkpoints from the given directory.
+
+    We assume that checkpoint filename has the form `checkpoint-xxx.pt`
+    where xxx is a number, representing the number of processed batches
+    when saving that checkpoint. We sort checkpoints by filename and keep
+    only the `topk` checkpoints with the highest `xxx`.
+
+    Args:
+      out_dir:
+        The directory containing checkpoints to be removed.
+      topk:
+        Number of checkpoints to keep.
+      rank:
+        If using DDP for training, it is the rank of the current node.
+        Use 0 if no DDP is used for training.
+    """
+    assert topk >= 1, topk
+    if rank != 0:
+        return
+    checkpoints = find_checkpoints(out_dir)
+
+    if len(checkpoints) == 0:
+        logging.warn(f"No checkpoints found in {out_dir}")
+        return
+
+    if len(checkpoints) <= topk:
+        return
+
+    to_remove = checkpoints[topk:]
+    for c in to_remove:
+        os.remove(c)
+
+
+def update_averaged_model(
+    params: Dict[str, Tensor],
+    model_cur: Union[nn.Module, DDP],
+    model_avg: nn.Module,
+) -> None:
+    """Update the averaged model:
+    model_avg = model_cur * (average_period / batch_idx_train)
+      + model_avg * ((batch_idx_train - average_period) / batch_idx_train)
+
+    Args:
+      params:
+        User defined parameters, e.g., epoch, loss.
+      model_cur:
+        The current model.
+      model_avg:
+        The averaged model to be updated.
+    """
+    weight_cur = params.average_period / params.batch_idx_train
+    weight_avg = 1 - weight_cur
+
+    if isinstance(model_cur, DDP):
+        model_cur = model_cur.module
+
+    cur = model_cur.state_dict()
+    avg = model_avg.state_dict()
+
+    average_state_dict(
+        state_dict_1=avg,
+        state_dict_2=cur,
+        weight_1=weight_avg,
+        weight_2=weight_cur,
+    )
+
+
+def save_checkpoint_with_global_batch_idx(
+    out_dir: Path,
+    global_batch_idx: int,
+    model: Union[nn.Module, DDP],
+    model_avg: Optional[nn.Module] = None,
+    params: Optional[Dict[str, Any]] = None,
+    optimizer: Optional[Optimizer] = None,
+    scheduler: Optional[LRSchedulerType] = None,
+    scaler: Optional[GradScaler] = None,
+    sampler: Optional[CutSampler] = None,
+    rank: int = 0,
+):
+    """Save training info after processing given number of batches.
+
+    Args:
+      out_dir:
+        The directory to save the checkpoint.
+      global_batch_idx:
+        The number of batches processed so far from the very start of the
+        training. The saved checkpoint will have the following filename:
+
+            f'out_dir / checkpoint-{global_batch_idx}.pt'
+      model:
+        The neural network model whose `state_dict` will be saved in the
+        checkpoint.
+      model_avg:
+        The stored model averaged from the start of training.
+      params:
+        A dict of training configurations to be saved.
+      optimizer:
+        The optimizer used in the training. Its `state_dict` will be saved.
+      scheduler:
+        The learning rate scheduler used in the training. Its `state_dict` will
+        be saved.
+      scaler:
+        The scaler used for mix precision training. Its `state_dict` will
+        be saved.
+      sampler:
+        The sampler used in the training dataset.
+      rank:
+        The rank ID used in DDP training of the current node. Set it to 0
+        if DDP is not used.
+    """
+    out_dir = Path(out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    filename = out_dir / f"checkpoint-{global_batch_idx}.pt"
+    save_checkpoint(
+        filename=filename,
+        model=model,
+        model_avg=model_avg,
+        params=params,
+        optimizer=optimizer,
+        scheduler=scheduler,
+        scaler=scaler,
+        sampler=sampler,
+        rank=rank,
+    )

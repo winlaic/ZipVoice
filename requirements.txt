@@ -2,9 +2,10 @@
 
 torch
 torchaudio
-huggingface_hub
 lhotse
+huggingface_hub
 safetensors
+tensorboard
 vocos
 
 # Normalization

@@ -76,8 +76,8 @@ if [ $stage -le 2 ] && [ $stop_stage -ge 2 ]; then
   mkdir -p data/manifests/splits
 
   if [ ! -e data/manifests/splits/.emilia.preprocess.done ]; then
-    python local/preprocess_emilia.py --subset EN
-    python local/preprocess_emilia.py --subset ZH
+    python tools/preprocess_emilia.py --subset EN
+    python tools/preprocess_emilia.py --subset ZH
     touch data/manifests/splits/.emilia.preprocess.done
   fi
 
@@ -89,7 +89,7 @@ if [ $stage -le 3 ] && [ $stop_stage -ge 3 ]; then
   if [ ! -e data/fbank/emilia_splits/.emilia.fbank.done ]; then
     # You can speed up the extraction by distributing splits to multiple machines.
     for subset in EN ZH; do
-      python local/compute_fbank.py \
+      python tools/compute_fbank.py \
         --source-dir data/manifests/splits \
         --dest-dir data/fbank/emilia_splits \
         --dataset emilia \
@@ -123,6 +123,6 @@ fi
 if [ $stage -le 4 ] && [ $stop_stage -ge 4 ]; then
   log "Stage 4: Generate token file"
   if [ ! -e data/tokens_emilia.txt ]; then
-    ./local/prepare_token_file_emilia.py --tokens data/tokens_emilia.txt
+    ./tools/prepare_token_file_emilia.py --tokens data/tokens_emilia.txt
   fi
 fi

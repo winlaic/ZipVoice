@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright         2023  Xiaomi Corp.        (authors: Wei Kang,
+# Copyright    2024-2025  Xiaomi Corp.        (authors: Wei Kang,
 #                                                       Han Zhu)
 #
 # See ../../../../LICENSE for clarification regarding multiple authors
@@ -42,11 +42,19 @@ from pathlib import Path
 from shutil import copyfile
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import diagnostics
 import optim
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from checkpoint import load_checkpoint, save_checkpoint
+from checkpoint import (
+    load_checkpoint,
+    save_checkpoint,
+    remove_checkpoints,
+    save_checkpoint_with_global_batch_idx,
+    update_averaged_model,
+)
+from hooks import register_inf_check_hooks
 from lhotse.cut import Cut, CutSet
 from lhotse.utils import fix_random_seed
 from model import get_model
@@ -58,26 +66,23 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 from tts_datamodule import TtsDataModule
-from utils import get_adjusted_batch_count, prepare_input, set_batch_count
-
-from icefall import diagnostics
-from icefall.checkpoint import (
-    remove_checkpoints,
-    save_checkpoint_with_global_batch_idx,
-    update_averaged_model,
-)
-from icefall.dist import cleanup_dist, setup_dist
-from icefall.env import get_env_info
-from icefall.hooks import register_inf_check_hooks
-from icefall.utils import (
+from utils import (
     AttributeDict,
     MetricsTracker,
-    get_parameter_groups_with_lrs,
+    get_adjusted_batch_count,
+    prepare_input,
+    set_batch_count,
+    cleanup_dist,
+    setup_dist,
     setup_logger,
+    get_env_info,
     str2bool,
 )
 
-LRSchedulerType = Union[torch.optim.lr_scheduler._LRScheduler, optim.LRScheduler]
+
+LRSchedulerType = Union[
+    torch.optim.lr_scheduler._LRScheduler, optim.LRScheduler
+]
 
 
 def add_model_arguments(parser: argparse.ArgumentParser):
@@ -554,7 +559,11 @@ def compute_fbank_loss(
         disables autograd.
     """
 
-    device = model.device if isinstance(model, DDP) else next(model.parameters()).device
+    device = (
+        model.device
+        if isinstance(model, DDP)
+        else next(model.parameters()).device
+    )
 
     batch_size, num_frames, _ = features.shape
 
@@ -638,7 +647,11 @@ def train_one_epoch(
         be set to 0.
     """
     model.train()
-    device = model.device if isinstance(model, DDP) else next(model.parameters()).device
+    device = (
+        model.device
+        if isinstance(model, DDP)
+        else next(model.parameters()).device
+    )
 
     # used to track the stats over iterations in one epoch
     tot_loss = MetricsTracker()
@@ -812,7 +825,11 @@ def train_one_epoch(
                 f"global_batch_idx: {params.batch_idx_train}, batch size: {batch_size}, "
                 f"loss[{loss_info}], tot_loss[{tot_loss}], "
                 f"cur_lr: {cur_lr:.2e}, "
-                + (f"grad_scale: {scaler._scale.item()}" if params.use_fp16 else "")
+                + (
+                    f"grad_scale: {scaler._scale.item()}"
+                    if params.use_fp16
+                    else ""
+                )
             )
 
             if tb_writer is not None:
@@ -822,10 +839,14 @@ def train_one_epoch(
                 loss_info.write_summary(
                     tb_writer, "train/current_", params.batch_idx_train
                 )
-                tot_loss.write_summary(tb_writer, "train/tot_", params.batch_idx_train)
+                tot_loss.write_summary(
+                    tb_writer, "train/tot_", params.batch_idx_train
+                )
                 if params.use_fp16:
                     tb_writer.add_scalar(
-                        "train/grad_scale", cur_grad_scale, params.batch_idx_train
+                        "train/grad_scale",
+                        cur_grad_scale,
+                        params.batch_idx_train,
                     )
 
     loss_value = tot_loss["loss"]
@@ -845,7 +866,11 @@ def compute_validation_loss(
     """Run the validation process."""
 
     model.eval()
-    device = model.device if isinstance(model, DDP) else next(model.parameters()).device
+    device = (
+        model.device
+        if isinstance(model, DDP)
+        else next(model.parameters()).device
+    )
 
     # used to summary the stats over iterations
     tot_loss = MetricsTracker()
@@ -936,7 +961,9 @@ def run(rank, world_size, args):
     model = get_model(params)
     if params.checkpoint is not None:
         logging.info(f"Loading pre-trained model from {params.checkpoint}")
-        _ = load_checkpoint(filename=params.checkpoint, model=model, strict=True)
+        _ = load_checkpoint(
+            filename=params.checkpoint, model=model, strict=True
+        )
     num_param = sum([p.numel() for p in model.parameters()])
     logging.info(f"Number of parameters : {num_param}")
 
@@ -946,7 +973,9 @@ def run(rank, world_size, args):
         model_avg = copy.deepcopy(model).to(torch.float64)
     assert params.start_epoch > 0, params.start_epoch
     if params.start_epoch > 1:
-        checkpoints = resume_checkpoint(params=params, model=model, model_avg=model_avg)
+        checkpoints = resume_checkpoint(
+            params=params, model=model, model_avg=model_avg
+        )
 
     model = model.to(device)
     if world_size > 1:

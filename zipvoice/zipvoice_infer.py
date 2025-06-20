@@ -51,19 +51,19 @@ Each line of `test.tsv` is in the format of
 
 import argparse
 import datetime as dt
+import json
 import os
 
+from feature import TorchAudioFbank, TorchAudioFbankConfig
 import numpy as np
 import safetensors.torch
 import torch
-import torch.nn as nn
 import torchaudio
-from feature import TorchAudioFbank, TorchAudioFbankConfig
+
 from huggingface_hub import hf_hub_download
-from lhotse.utils import fix_random_seed
 from model import get_distill_model, get_model
 from tokenizer import TokenizerEmilia
-from utils import AttributeDict
+from utils import AttributeDict, fix_random_seed
 from vocos import Vocos
 
 
@@ -179,160 +179,33 @@ def get_parser():
         help="Random seed",
     )
 
-    add_model_arguments(parser)
-
     return parser
 
 
-def add_model_arguments(parser: argparse.ArgumentParser):
-    parser.add_argument(
-        "--fm-decoder-downsampling-factor",
-        type=str,
-        default="1,2,4,2,1",
-        help="Downsampling factor for each stack of encoder layers.",
-    )
+class MelSpectrogramFeatures(torch.nn.Module):
+    def __init__(
+        self,
+        sampling_rate=24000,
+        n_mels=100,
+        n_fft=1024,
+        hop_length=256,
+    ):
+        super().__init__()
 
-    parser.add_argument(
-        "--fm-decoder-num-layers",
-        type=str,
-        default="2,2,4,4,4",
-        help="Number of zipformer encoder layers per stack, comma separated.",
-    )
+        self.mel_spec = torchaudio.transforms.MelSpectrogram(
+            sample_rate=sampling_rate,
+            n_fft=n_fft,
+            hop_length=hop_length,
+            n_mels=n_mels,
+            center=True,
+            power=1,
+        )
 
-    parser.add_argument(
-        "--fm-decoder-cnn-module-kernel",
-        type=str,
-        default="31,15,7,15,31",
-        help="Sizes of convolutional kernels in convolution modules "
-        "in each encoder stack: a single int or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--fm-decoder-feedforward-dim",
-        type=int,
-        default=1536,
-        help="Feedforward dimension of the zipformer encoder layers, "
-        "per stack, comma separated.",
-    )
-
-    parser.add_argument(
-        "--fm-decoder-num-heads",
-        type=int,
-        default=4,
-        help="Number of attention heads in the zipformer encoder layers: "
-        "a single int or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--fm-decoder-dim",
-        type=int,
-        default=512,
-        help="Embedding dimension in encoder stacks: a single int "
-        "or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--text-encoder-downsampling-factor",
-        type=str,
-        default="1",
-        help="Downsampling factor for each stack of encoder layers.",
-    )
-
-    parser.add_argument(
-        "--text-encoder-num-layers",
-        type=str,
-        default="4",
-        help="Number of zipformer encoder layers per stack, comma separated.",
-    )
-
-    parser.add_argument(
-        "--text-encoder-feedforward-dim",
-        type=int,
-        default=512,
-        help="Feedforward dimension of the zipformer encoder layers, "
-        "per stack, comma separated.",
-    )
-
-    parser.add_argument(
-        "--text-encoder-cnn-module-kernel",
-        type=str,
-        default="9",
-        help="Sizes of convolutional kernels in convolution modules in "
-        "each encoder stack: a single int or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--text-encoder-num-heads",
-        type=int,
-        default=4,
-        help="Number of attention heads in the zipformer encoder layers: "
-        "a single int or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--text-encoder-dim",
-        type=int,
-        default=192,
-        help="Embedding dimension in encoder stacks: "
-        "a single int or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--query-head-dim",
-        type=int,
-        default=32,
-        help="Query/key dimension per head in encoder stacks: "
-        "a single int or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--value-head-dim",
-        type=int,
-        default=12,
-        help="Value dimension per head in encoder stacks: "
-        "a single int or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--pos-head-dim",
-        type=int,
-        default=4,
-        help="Positional-encoding dimension per head in encoder stacks: "
-        "a single int or comma-separated list.",
-    )
-
-    parser.add_argument(
-        "--pos-dim",
-        type=int,
-        default=48,
-        help="Positional-encoding embedding dimension",
-    )
-
-    parser.add_argument(
-        "--time-embed-dim",
-        type=int,
-        default=192,
-        help="Embedding dimension of timestamps embedding.",
-    )
-
-    parser.add_argument(
-        "--text-embed-dim",
-        type=int,
-        default=192,
-        help="Embedding dimension of text embedding.",
-    )
-
-
-def get_params() -> AttributeDict:
-    params = AttributeDict(
-        {
-            "sampling_rate": 24000,
-            "frame_shift_ms": 256 / 24000 * 1000,
-            "feat_dim": 100,
-        }
-    )
-
-    return params
+    def forward(self, inp):
+        assert len(inp.shape) == 2
+        mel = self.mel_spec(inp)
+        logmel = mel.clamp(min=1e-7).log()
+        return logmel
 
 
 def get_vocoder():
@@ -345,8 +218,8 @@ def generate_sentence(
     prompt_text: str,
     prompt_wav: str,
     text: str,
-    model: nn.Module,
-    vocoder: nn.Module,
+    model: torch.nn.Module,
+    vocoder: torch.nn.Module,
     tokenizer: TokenizerEmilia,
     feature_extractor: TorchAudioFbank,
     device: torch.device,
@@ -367,8 +240,8 @@ def generate_sentence(
         prompt_text (str): Transcription of the prompt wav.
         prompt_wav (str): Path to the prompt wav file.
         text (str): Text to be synthesized into a waveform.
-        model (nn.Module): The model used for generation.
-        vocoder (nn.Module): The vocoder used to convert features to waveforms.
+        model (torch.nn.Module): The model used for generation.
+        vocoder (torch.nn.Module): The vocoder used to convert features to waveforms.
         tokenizer (TokenizerEmilia): The tokenizer used to convert text to tokens.
         feature_extractor (TorchAudioFbank): The feature extractor used to
             extract acoustic features.
@@ -408,8 +281,11 @@ def generate_sentence(
     prompt_features = feature_extractor.extract(
         prompt_wav, sampling_rate=sampling_rate
     ).to(device)
+
     prompt_features = prompt_features.unsqueeze(0) * feat_scale
-    prompt_features_lens = torch.tensor([prompt_features.size(1)], device=device)
+    prompt_features_lens = torch.tensor(
+        [prompt_features.size(1)], device=device
+    )
 
     # Start timing
     start_t = dt.datetime.now()
@@ -468,8 +344,8 @@ def generate_sentence(
 def generate(
     res_dir: str,
     test_list: str,
-    model: nn.Module,
-    vocoder: nn.Module,
+    model: torch.nn.Module,
+    vocoder: torch.nn.Module,
     tokenizer: TokenizerEmilia,
     feature_extractor: TorchAudioFbank,
     device: torch.device,
@@ -532,7 +408,7 @@ def main():
     parser = get_parser()
     args = parser.parse_args()
 
-    params = get_params()
+    params = AttributeDict()
     params.update(vars(args))
 
     model_defaults = {
@@ -549,7 +425,7 @@ def main():
     model_specific_defaults = model_defaults.get(params.model_name, {})
 
     for param, value in model_specific_defaults.items():
-        if getattr(params, param) == parser.get_default(param):
+        if getattr(params, param) is None:
             setattr(params, param, value)
             print(f"Setting {param} to default value: {value}")
 
@@ -565,7 +441,18 @@ def main():
     else:
         params.device = torch.device("cpu")
 
-    token_file = hf_hub_download("zhu-han/ZipVoice", filename="tokens_emilia.txt")
+    model_config = hf_hub_download("zhu-han/ZipVoice", filename="model.json")
+
+    with open(model_config, "r") as f:
+        model_config = json.load(f)
+        for key, value in model_config["model"].items():
+            setattr(params, key, value)
+        for key, value in model_config["feature"].items():
+            setattr(params, key, value)
+
+    token_file = hf_hub_download(
+        "zhu-han/ZipVoice", filename="tokens_emilia.txt"
+    )
 
     tokenizer = TokenizerEmilia(token_file)
 
@@ -576,7 +463,8 @@ def main():
     if params.model_name == "zipvoice_distill":
         model = get_distill_model(params)
         model_ckpt = hf_hub_download(
-            "zhu-han/ZipVoice", filename="exp_zipvoice_distill/model.safetensors"
+            "zhu-han/ZipVoice",
+            filename="exp_zipvoice_distill/model.safetensors",
         )
     else:
         model = get_model(params)
@@ -595,9 +483,9 @@ def main():
 
     config = TorchAudioFbankConfig(
         sampling_rate=params.sampling_rate,
-        n_mels=100,
-        n_fft=1024,
-        hop_length=256,
+        n_mels=params.feat_dim,
+        n_fft=params.n_fft,
+        hop_length=params.hop_length,
     )
     feature_extractor = TorchAudioFbank(config)
 

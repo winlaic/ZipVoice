@@ -144,7 +144,10 @@ def get_args():
     )
 
     parser.add_argument(
-        "--num-jobs", type=int, default=20, help="The number of extractor workers."
+        "--num-jobs",
+        type=int,
+        default=20,
+        help="The number of extractor workers.",
     )
 
     return parser.parse_args()
@@ -276,7 +279,9 @@ def compute_fbank(params):
 
 
 if __name__ == "__main__":
-    formatter = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+    formatter = (
+        "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+    )
 
     logging.basicConfig(format=formatter, level=logging.INFO)
     args = get_args()

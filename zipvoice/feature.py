@@ -47,7 +47,6 @@ class MelSpectrogramFeatures(nn.Module):
 
     def forward(self, inp):
         assert len(inp.shape) == 2
-
         mel = self.mel_spec(inp)
         logmel = mel.clamp(min=1e-7).log()
         return logmel

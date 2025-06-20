@@ -91,8 +91,8 @@ from tokenizer import TokenizerEmilia, TokenizerLibriTTS
 from train_flow import add_model_arguments, get_params
 from vocos import Vocos
 
-from icefall.checkpoint import average_checkpoints_with_averaged_model, find_checkpoints
-from icefall.utils import AttributeDict, setup_logger, str2bool
+from checkpoint import average_checkpoints_with_averaged_model, find_checkpoints
+from utils import AttributeDict, setup_logger, str2bool
 
 
 def get_parser():
@@ -320,7 +320,9 @@ def generate_sentence(
         prompt_wav, sampling_rate=sampling_rate
     ).to(device)
     prompt_features = prompt_features.unsqueeze(0) * feat_scale
-    prompt_features_lens = torch.tensor([prompt_features.size(1)], device=device)
+    prompt_features_lens = torch.tensor(
+        [prompt_features.size(1)], device=device
+    )
 
     # Start timing
     start_t = dt.datetime.now()
@@ -496,17 +498,21 @@ def main():
         if params.avg == 0:
             if params.iter > 0:
                 load_checkpoint(
-                    f"{params.exp_dir}/checkpoint-{params.iter}.pt", model, strict=True
+                    f"{params.exp_dir}/checkpoint-{params.iter}.pt",
+                    model,
+                    strict=True,
                 )
             else:
                 load_checkpoint(
-                    f"{params.exp_dir}/epoch-{params.epoch}.pt", model, strict=True
+                    f"{params.exp_dir}/epoch-{params.epoch}.pt",
+                    model,
+                    strict=True,
                 )
         else:
             if params.iter > 0:
-                filenames = find_checkpoints(params.exp_dir, iteration=-params.iter)[
-                    : params.avg + 1
-                ]
+                filenames = find_checkpoints(
+                    params.exp_dir, iteration=-params.iter
+                )[: params.avg + 1]
                 if len(filenames) == 0:
                     raise ValueError(
                         f"No checkpoints found for"

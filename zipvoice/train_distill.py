@@ -62,11 +62,20 @@ from pathlib import Path
 from shutil import copyfile
 from typing import Any, Dict, List, Optional, Tuple, Union
 
+import diagnostics
 import optim
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from checkpoint import load_checkpoint, save_checkpoint
+from checkpoint import (
+    load_checkpoint,
+    save_checkpoint,
+    remove_checkpoints,
+    save_checkpoint_with_global_batch_idx,
+    update_averaged_model,
+)
+
+from hooks import register_inf_check_hooks
 from lhotse.cut import Cut, CutSet
 from lhotse.utils import fix_random_seed
 from model import get_distill_model, get_model
@@ -80,30 +89,24 @@ from torch.utils.tensorboard import SummaryWriter
 from train_flow import add_model_arguments, get_params
 from tts_datamodule import TtsDataModule
 from utils import (
-    condition_time_mask,
-    get_adjusted_batch_count,
-    prepare_input,
-    set_batch_count,
-)
-
-from icefall import diagnostics
-from icefall.checkpoint import (
-    remove_checkpoints,
-    save_checkpoint_with_global_batch_idx,
-    update_averaged_model,
-)
-from icefall.dist import cleanup_dist, setup_dist
-from icefall.hooks import register_inf_check_hooks
-from icefall.utils import (
     AttributeDict,
     MetricsTracker,
-    get_parameter_groups_with_lrs,
+    cleanup_dist,
+    condition_time_mask,
     make_pad_mask,
+    get_adjusted_batch_count,
+    get_parameter_groups_with_lrs,
+    prepare_input,
+    set_batch_count,
+    setup_dist,
     setup_logger,
     str2bool,
 )
 
-LRSchedulerType = Union[torch.optim.lr_scheduler._LRScheduler, optim.LRScheduler]
+
+LRSchedulerType = Union[
+    torch.optim.lr_scheduler._LRScheduler, optim.LRScheduler
+]
 
 
 def get_parser():
@@ -291,12 +294,16 @@ def ema(new_model, ema_model, decay):
     ema_model_dict = ema_model.state_dict()
     for key in new_model_dict.keys():
         ema_model_dict[key].data.copy_(
-            ema_model_dict[key].data * decay + new_model_dict[key].data * (1 - decay)
+            ema_model_dict[key].data * decay
+            + new_model_dict[key].data * (1 - decay)
         )
 
 
 def resume_checkpoint(
-    params: AttributeDict, model: nn.Module, model_avg: nn.Module, model_ema: nn.Module
+    params: AttributeDict,
+    model: nn.Module,
+    model_avg: nn.Module,
+    model_ema: nn.Module,
 ) -> Optional[Dict[str, Any]]:
     """Load checkpoint from file.
 
@@ -320,7 +327,11 @@ def resume_checkpoint(
     assert filename.is_file(), f"{filename} does not exist!"
 
     saved_params = load_checkpoint(
-        filename, model=model, model_avg=model_avg, model_ema=model_ema, strict=True
+        filename,
+        model=model,
+        model_avg=model_avg,
+        model_ema=model_ema,
+        strict=True,
     )
 
     if params.start_epoch > 1:
@@ -370,7 +381,11 @@ def compute_fbank_loss(
         disables autograd.
     """
 
-    device = model.device if isinstance(model, DDP) else next(model.parameters()).device
+    device = (
+        model.device
+        if isinstance(model, DDP)
+        else next(model.parameters()).device
+    )
 
     batch_size, num_frames, _ = features.shape
 
@@ -463,7 +478,9 @@ def compute_fbank_loss(
         )
         pred_v = (pred_x1 - xt) / (t_dest - t)
 
-        padding_mask = make_pad_mask(features_lens, max_len=num_frames)  # (B, T)
+        padding_mask = make_pad_mask(
+            features_lens, max_len=num_frames
+        )  # (B, T)
         loss_mask = speech_condition_mask & (~padding_mask)
 
         target_v = (target_x1 - xt) / (t_dest - t)
@@ -531,7 +548,11 @@ def train_one_epoch(
         be set to 0.
     """
     model.train()
-    device = model.device if isinstance(model, DDP) else next(model.parameters()).device
+    device = (
+        model.device
+        if isinstance(model, DDP)
+        else next(model.parameters()).device
+    )
 
     # used to track the stats over iterations in one epoch
     tot_loss = MetricsTracker()
@@ -708,7 +729,11 @@ def train_one_epoch(
                 f"global_batch_idx: {params.batch_idx_train}, batch size: {batch_size}, "
                 f"loss[{loss_info}], tot_loss[{tot_loss}], "
                 f"cur_lr: {cur_lr:.2e}, "
-                + (f"grad_scale: {scaler._scale.item()}" if params.use_fp16 else "")
+                + (
+                    f"grad_scale: {scaler._scale.item()}"
+                    if params.use_fp16
+                    else ""
+                )
             )
 
             if tb_writer is not None:
@@ -718,10 +743,14 @@ def train_one_epoch(
                 loss_info.write_summary(
                     tb_writer, "train/current_", params.batch_idx_train
                 )
-                tot_loss.write_summary(tb_writer, "train/tot_", params.batch_idx_train)
+                tot_loss.write_summary(
+                    tb_writer, "train/tot_", params.batch_idx_train
+                )
                 if params.use_fp16:
                     tb_writer.add_scalar(
-                        "train/grad_scale", cur_grad_scale, params.batch_idx_train
+                        "train/grad_scale",
+                        cur_grad_scale,
+                        params.batch_idx_train,
                     )
 
     loss_value = tot_loss["loss"]
@@ -742,7 +771,11 @@ def compute_validation_loss(
     """Run the validation process."""
 
     model.eval()
-    device = model.device if isinstance(model, DDP) else next(model.parameters()).device
+    device = (
+        model.device
+        if isinstance(model, DDP)
+        else next(model.parameters()).device
+    )
 
     # used to summary the stats over iterations
     tot_loss = MetricsTracker()
@@ -865,7 +898,10 @@ def run(rank, world_size, args):
             )
         else:
             checkpoints = resume_checkpoint(
-                params=params, model=model, model_avg=model_avg, model_ema=teacher_model
+                params=params,
+                model=model,
+                model_avg=model_avg,
+                model_ema=teacher_model,
             )
 
     model = model.to(device)

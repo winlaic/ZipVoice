@@ -57,7 +57,7 @@ if [ $stage -le 2 ] && [ $stop_stage -ge 2 ]; then
 
   if [ ! -e data/fbank/.libritts.done ]; then
     for subset in train-clean-100 train-clean-360 train-other-500 dev-clean test-clean; do
-      python local/compute_fbank.py \
+      python tools/compute_fbank.py \
         --source-dir data/manifests \
         --dest-dir data/fbank \
         --dataset libritts \
@@ -85,7 +85,7 @@ if [ $stage -le 2 ] && [ $stop_stage -ge 2 ]; then
 
   if [ ! -e data/fbank/.libritts-validated.done ]; then
     log "Validating data/fbank for LibriTTS"
-    ./local/validate_manifest.py \
+    ./tools/validate_manifest.py \
       data/fbank/libritts_cuts_train-all-shuf.jsonl.gz
     touch data/fbank/.libritts-validated.done
   fi
@@ -94,6 +94,6 @@ fi
 if [ $stage -le 3 ] && [ $stop_stage -ge 3 ]; then
   log "Stage 3: Generate token file"
   if [ ! -e data/tokens_libritts.txt ]; then
-    ./local/prepare_token_file_libritts.py --tokens data/tokens_libritts.txt
+    ./tools/prepare_token_file_libritts.py --tokens data/tokens_libritts.txt
   fi
 fi
