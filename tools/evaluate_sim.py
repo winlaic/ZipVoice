@@ -1,3 +1,22 @@
+#!/usr/bin/env python3
+# Copyright    2025  Xiaomi Corp.        (authors:  Zhu Han
+#                                                   Wei Kang)
+#
+# See ../../../../LICENSE for clarification regarding multiple authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 """
 Calculate pairwise Speaker Similarity betweeen two speech directories.
 SV model wavlm_large_finetune.pth is downloaded from
@@ -60,9 +79,13 @@ class SpeakerSimilarity:
         self.sample_rate = 16000
         self.channels = 1
         self.device = (
-            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+            torch.device("cuda")
+            if torch.cuda.is_available()
+            else torch.device("cpu")
         )
-        logging.info("[Speaker Similarity] Using device: {}".format(self.device))
+        logging.info(
+            "[Speaker Similarity] Using device: {}".format(self.device)
+        )
         self.model = ECAPA_TDNN_WAVLLM(
             feat_dim=1024,
             channels=512,
@@ -127,7 +150,9 @@ class SpeakerSimilarity:
         with open(test_list, "r") as fr:
             lines = fr.readlines()
             for line in lines:
-                wav_name, prompt_text, prompt_wav, text = line.strip().split("\t")
+                wav_name, prompt_text, prompt_wav, text = line.strip().split(
+                    "\t"
+                )
                 prompt_wavs.append(prompt_wav)
                 eval_wavs.append(os.path.join(eval_path, wav_name + ".wav"))
         embds_prompt = self.get_embeddings(prompt_wavs, dtype=dtype)
@@ -136,16 +161,22 @@ class SpeakerSimilarity:
 
         # Check if embeddings are empty
         if len(embds_prompt) == 0:
-            logging.info("[Speaker Similarity] real set dir is empty, exiting...")
+            logging.info(
+                "[Speaker Similarity] real set dir is empty, exiting..."
+            )
             return -1
         if len(embds_eval) == 0:
-            logging.info("[Speaker Similarity] eval set dir is empty, exiting...")
+            logging.info(
+                "[Speaker Similarity] eval set dir is empty, exiting..."
+            )
             return -1
 
         scores = []
         for real_embd, eval_embd in zip(embds_prompt, embds_eval):
             scores.append(
-                torch.nn.functional.cosine_similarity(real_embd, eval_embd, dim=-1)
+                torch.nn.functional.cosine_similarity(
+                    real_embd, eval_embd, dim=-1
+                )
                 .detach()
                 .cpu()
                 .numpy()
@@ -235,7 +266,13 @@ class Conv1dReluBn(nn.Module):
     ):
         super().__init__()
         self.conv = nn.Conv1d(
-            in_channels, out_channels, kernel_size, stride, padding, dilation, bias=bias
+            in_channels,
+            out_channels,
+            kernel_size,
+            stride,
+            padding,
+            dilation,
+            bias=bias,
         )
         self.bn = nn.BatchNorm1d(out_channels)
 
@@ -325,7 +362,9 @@ class SE_Res2Block(nn.Module):
 
 
 class AttentiveStatsPool(nn.Module):
-    def __init__(self, in_dim, attention_channels=128, global_context_att=False):
+    def __init__(
+        self, in_dim, attention_channels=128, global_context_att=False
+    ):
         super().__init__()
         self.global_context_att = global_context_att
 
@@ -388,13 +427,15 @@ class ECAPA_TDNN_WAVLLM(nn.Module):
             )
 
         if len(self.feature_extract.model.encoder.layers) == 24 and hasattr(
-            self.feature_extract.model.encoder.layers[23].self_attn, "fp32_attention"
+            self.feature_extract.model.encoder.layers[23].self_attn,
+            "fp32_attention",
         ):
             self.feature_extract.model.encoder.layers[
                 23
             ].self_attn.fp32_attention = False
         if len(self.feature_extract.model.encoder.layers) == 24 and hasattr(
-            self.feature_extract.model.encoder.layers[11].self_attn, "fp32_attention"
+            self.feature_extract.model.encoder.layers[11].self_attn,
+            "fp32_attention",
         ):
             self.feature_extract.model.encoder.layers[
                 11
@@ -407,7 +448,9 @@ class ECAPA_TDNN_WAVLLM(nn.Module):
         # self.channels = [channels] * 4 + [channels * 3]
         self.channels = [channels] * 4 + [1536]
 
-        self.layer1 = Conv1dReluBn(feat_dim, self.channels[0], kernel_size=5, padding=2)
+        self.layer1 = Conv1dReluBn(
+            feat_dim, self.channels[0], kernel_size=5, padding=2
+        )
         self.layer2 = SE_Res2Block(
             self.channels[0],
             self.channels[1],
@@ -452,7 +495,11 @@ class ECAPA_TDNN_WAVLLM(nn.Module):
 
     def get_feat_num(self):
         self.feature_extract.eval()
-        wav = [torch.randn(self.sr).to(next(self.feature_extract.parameters()).device)]
+        wav = [
+            torch.randn(self.sr).to(
+                next(self.feature_extract.parameters()).device
+            )
+        ]
         with torch.no_grad():
             features = self.feature_extract(wav)
         select_feature = features["hidden_states"]

@@ -38,6 +38,7 @@ import argparse
 import copy
 import logging
 import os
+from functools import partial
 from pathlib import Path
 from shutil import copyfile
 from typing import Any, Dict, List, Optional, Tuple, Union
@@ -51,6 +52,7 @@ from checkpoint import (
     load_checkpoint,
     save_checkpoint,
     remove_checkpoints,
+    resume_checkpoint,
     save_checkpoint_with_global_batch_idx,
     update_averaged_model,
 )
@@ -70,6 +72,7 @@ from utils import (
     AttributeDict,
     MetricsTracker,
     get_adjusted_batch_count,
+    get_parameter_groups_with_lrs,
     prepare_input,
     set_batch_count,
     cleanup_dist,
@@ -486,51 +489,6 @@ def get_params() -> AttributeDict:
     return params
 
 
-def resume_checkpoint(
-    params: AttributeDict, model: nn.Module, model_avg: nn.Module
-) -> Optional[Dict[str, Any]]:
-    """Load checkpoint from file.
-
-    If params.start_epoch is larger than 1, it will load the checkpoint from
-    `params.start_epoch - 1`.
-
-    Apart from loading state dict for `model` it also updates
-    `best_train_epoch`, `best_train_loss`, `best_valid_epoch`,
-    and `best_valid_loss` in `params`.
-
-    Args:
-      params:
-        The return value of :func:`get_params`.
-      model:
-        The training model.
-    Returns:
-      Return a dict containing previously saved training info.
-    """
-    if params.start_epoch > 1:
-        filename = params.exp_dir / f"epoch-{params.start_epoch-1}.pt"
-    else:
-        return None
-
-    logging.info(f"Resuming from file {filename}")
-    assert filename.is_file(), f"{filename} does not exist!"
-
-    saved_params = load_checkpoint(
-        filename, model=model, model_avg=model_avg, strict=True
-    )
-
-    keys = [
-        "best_train_epoch",
-        "best_valid_epoch",
-        "batch_idx_train",
-        "best_train_loss",
-        "best_valid_loss",
-    ]
-    for k in keys:
-        params[k] = saved_params[k]
-
-    return saved_params
-
-
 def compute_fbank_loss(
     params: AttributeDict,
     model: Union[nn.Module, DDP],
@@ -604,7 +562,6 @@ def compute_fbank_loss(
 def train_one_epoch(
     params: AttributeDict,
     model: Union[nn.Module, DDP],
-    tokenizer: TokenizerEmilia,
     optimizer: Optimizer,
     scheduler: LRSchedulerType,
     train_dl: torch.utils.data.DataLoader,
@@ -626,8 +583,6 @@ def train_one_epoch(
         It is returned by :func:`get_params`.
       model:
         The model for training.
-      tokenizer:
-        Used to convert text to tokens.
       optimizer:
         The optimizer.
       scheduler:
@@ -689,7 +644,6 @@ def train_one_epoch(
             valid_info = compute_validation_loss(
                 params=params,
                 model=model,
-                tokenizer=tokenizer,
                 valid_dl=valid_dl,
                 world_size=world_size,
             )
@@ -711,7 +665,6 @@ def train_one_epoch(
             params=params,
             batch=batch,
             device=device,
-            tokenizer=tokenizer,
             return_tokens=True,
             return_feature=True,
         )
@@ -859,7 +812,6 @@ def train_one_epoch(
 def compute_validation_loss(
     params: AttributeDict,
     model: Union[nn.Module, DDP],
-    tokenizer: TokenizerEmilia,
     valid_dl: torch.utils.data.DataLoader,
     world_size: int = 1,
 ) -> MetricsTracker:
@@ -880,7 +832,6 @@ def compute_validation_loss(
             params=params,
             batch=batch,
             device=device,
-            tokenizer=tokenizer,
             return_tokens=True,
             return_feature=True,
         )
@@ -905,6 +856,18 @@ def compute_validation_loss(
         params.best_valid_loss = loss_value
 
     return tot_loss
+
+
+def tokenize_text(c: Cut, tokenizer):
+    # SpeechSynthesisDataset needs normalized_text, see tts_datamodule for details
+    if hasattr(c.supervisions[0], "normalized_text"):
+        text = c.supervisions[0].normalized_text
+    else:
+        c.supervisions[0].normalized_text = c.supervisions[0].text
+        text = c.supervisions[0].text
+    tokens = tokenizer.texts_to_token_ids([text])
+    c.supervisions[0].tokens = tokens[0]
+    return c
 
 
 def run(rank, world_size, args):
@@ -1052,6 +1015,10 @@ def run(rank, world_size, args):
         train_cuts = train_cuts.filter(remove_short_and_long_utt_libritts)
         dev_cuts = datamodule.dev_libritts_cuts()
 
+    _tokenize_text = partial(tokenize_text, tokenizer=tokenizer)
+    train_cuts = train_cuts.map(_tokenize_text)
+    dev_cuts = dev_cuts.map(_tokenize_text)
+
     train_dl = datamodule.train_dataloaders(train_cuts)
 
     valid_dl = datamodule.dev_dataloaders(dev_cuts)
@@ -1073,7 +1040,6 @@ def run(rank, world_size, args):
             params=params,
             model=model,
             model_avg=model_avg,
-            tokenizer=tokenizer,
             optimizer=optimizer,
             scheduler=scheduler,
             train_dl=train_dl,

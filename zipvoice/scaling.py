@@ -892,6 +892,31 @@ class Whiten(nn.Module):
             return WhiteningPenaltyFunction.apply(x, self)
 
 
+class WithLoss(torch.autograd.Function):
+    @staticmethod
+    def forward(ctx, x: Tensor, y: Tensor, name: str):
+        ctx.y_shape = y.shape
+        if random.random() < 0.002 and name is not None:
+            loss_sum = y.sum().item()
+            logging.debug(f"WithLoss: name={name}, loss-sum={loss_sum:.3e}")
+        return x
+
+    @staticmethod
+    def backward(ctx, ans_grad: Tensor):
+        return (
+            ans_grad,
+            torch.ones(
+                ctx.y_shape, dtype=ans_grad.dtype, device=ans_grad.device
+            ),
+            None,
+        )
+
+
+def with_loss(x, y, name):
+    # returns x but adds y.sum() to the loss function.
+    return WithLoss.apply(x, y, name)
+
+
 class LimitParamValue(torch.autograd.Function):
     @staticmethod
     def forward(ctx, x: Tensor, min: float, max: float):

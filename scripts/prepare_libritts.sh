@@ -44,8 +44,8 @@ if [ $stage -le 1 ] && [ $stop_stage -ge 1 ]; then
   log "Stage 1: Prepare LibriTTS manifest"
   # We assume that you have downloaded the LibriTTS corpus
   # to $dl_dir/LibriTTS
-  mkdir -p data/manifests_libritts
-  if [ ! -e data/manifests_libritts/.libritts.done ]; then
+  mkdir -p data/manifests
+  if [ ! -e data/manifests/.libritts.done ]; then
     lhotse prepare libritts --num-jobs ${nj} $dl_dir/LibriTTS data/manifests
     touch data/manifests/.libritts.done
   fi
@@ -57,7 +57,7 @@ if [ $stage -le 2 ] && [ $stop_stage -ge 2 ]; then
 
   if [ ! -e data/fbank/.libritts.done ]; then
     for subset in train-clean-100 train-clean-360 train-other-500 dev-clean test-clean; do
-      python tools/compute_fbank.py \
+      ./tools/compute_fbank.py \
         --source-dir data/manifests \
         --dest-dir data/fbank \
         --dataset libritts \

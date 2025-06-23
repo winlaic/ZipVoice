@@ -2,6 +2,7 @@
 
 torch
 torchaudio
+numpy
 lhotse
 huggingface_hub
 safetensors

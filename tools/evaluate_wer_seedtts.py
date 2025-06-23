@@ -1,3 +1,22 @@
+#!/usr/bin/env python3
+# Copyright    2025  Xiaomi Corp.        (authors:  Zhu Han
+#                                                   Wei Kang)
+#
+# See ../../../../LICENSE for clarification regarding multiple authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 """
 Calculate WER with Whisper-large-v3 or Paraformer models, 
 following Seed-TTS https://github.com/BytedanceSpeech/seed-tts-eval
@@ -22,7 +41,9 @@ from zhon.hanzi import punctuation
 def get_parser():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--wav-path", type=str, help="path of the speech directory")
+    parser.add_argument(
+        "--wav-path", type=str, help="path of the speech directory"
+    )
     parser.add_argument(
         "--decode-path",
         type=str,
@@ -136,7 +157,9 @@ def main(test_list, wav_path, model_path, decode_path, lang, device):
                 predicted_ids, skip_special_tokens=True
             )[0]
         elif lang == "zh":
-            res = model.generate(input=wav_path, batch_size_s=300, disable_pbar=True)
+            res = model.generate(
+                input=wav_path, batch_size_s=300, disable_pbar=True
+            )
             transcription = res[0]["text"]
             transcription = zhconv.convert(transcription, "zh-cn")
 
@@ -144,7 +167,9 @@ def main(test_list, wav_path, model_path, decode_path, lang, device):
             transcription, text_ref, lang
         )
         if decode_path:
-            fout.write(f"{wav_path}\t{wer}\t{truth}\t{hypo}\t{inse}\t{dele}\t{subs}\n")
+            fout.write(
+                f"{wav_path}\t{wer}\t{truth}\t{hypo}\t{inse}\t{dele}\t{subs}\n"
+            )
         wers.append(float(wer))
         inses.append(float(inse))
         deles.append(float(dele))
@@ -152,7 +177,9 @@ def main(test_list, wav_path, model_path, decode_path, lang, device):
         word_nums += word_num
 
     wer_avg = round(np.mean(wers) * 100, 3)
-    wer = round((np.sum(subses) + np.sum(deles) + np.sum(inses)) / word_nums * 100, 3)
+    wer = round(
+        (np.sum(subses) + np.sum(deles) + np.sum(inses)) / word_nums * 100, 3
+    )
     subs = round(np.mean(subses) * 100, 3)
     dele = round(np.mean(deles) * 100, 3)
     inse = round(np.mean(inses) * 100, 3)

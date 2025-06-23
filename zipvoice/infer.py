@@ -79,7 +79,6 @@ from pathlib import Path
 from typing import Optional
 
 import numpy as np
-import soundfile as sf
 import torch
 import torch.nn as nn
 import torchaudio
@@ -373,8 +372,7 @@ def generate_sentence(
     # Adjust wav volume if necessary
     if prompt_rms < target_rms:
         wav = wav * prompt_rms / target_rms
-    wav = wav[0].cpu().numpy()
-    sf.write(save_path, wav, sampling_rate)
+    torchaudio.save(save_path, wav[0].cpu(), sampling_rate)
 
     return metrics
 

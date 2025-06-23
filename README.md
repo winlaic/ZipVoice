@@ -237,6 +237,7 @@ python3 zipvoice/train_flow.py \
         --world-size 8 \
         --use-fp16 1 \
         --dataset libritts \
+        --token-type char \
         --max-duration 250 \
         --lr-epochs 10 \
         --lr-batches 7500 \

@@ -1,8 +1,5 @@
 #!/usr/bin/env python3
-# Copyright         2024  Xiaomi Corp.        (authors: Zengwei Yao,
-#                                                       Zengrui Jin,
-#                                                       Wei Kang)
-#                   2024  Tsinghua University (authors: Zengrui Jin,)
+# Copyright     2024-2025  Xiaomi Corp.        (authors: Wei Kang)
 #
 # See ../../../../LICENSE for clarification regarding multiple authors
 #
@@ -90,10 +87,14 @@ def preprocess_emilia(file_name: str, input_dir: Path, output_dir: Path):
         clean_chars = []
         for x in text:
             if is_hangul(x):
-                logging.warning(f"Delete cut with text containing Korean : {text}")
+                logging.warning(
+                    f"Delete cut with text containing Korean : {text}"
+                )
                 return False
             if is_japanese(x):
-                logging.warning(f"Delete cut with text containing Japanese : {text}")
+                logging.warning(
+                    f"Delete cut with text containing Japanese : {text}"
+                )
                 return False
             if is_chinese(x):
                 chinese.append(x)
@@ -110,7 +111,9 @@ def preprocess_emilia(file_name: str, input_dir: Path, output_dir: Path):
         words = tokenize_by_CJK_char("".join(clean_chars))
         for i in range(len(words) - 10):
             if words[i : i + 10].count(words[i]) == 10:
-                logging.warning(f"Delete cut with text with too much repeats : {text}")
+                logging.warning(
+                    f"Delete cut with text with too much repeats : {text}"
+                )
                 return False
         # word speed, 20 - 600 / minute
         if duration < len(words) / 600 * 60 or duration > len(words) / 20 * 60:
@@ -131,7 +134,9 @@ def preprocess_emilia(file_name: str, input_dir: Path, output_dir: Path):
 
 
 if __name__ == "__main__":
-    formatter = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+    formatter = (
+        "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+    )
     logging.basicConfig(format=formatter, level=logging.INFO)
 
     args = get_args()
@@ -140,12 +145,17 @@ if __name__ == "__main__":
     output_dir = Path(args.dest_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    cut_files = glob.glob(f"{args.source_dir}/emilia_cuts_{args.subset}.*.jsonl.gz")
+    cut_files = glob.glob(
+        f"{args.source_dir}/emilia_cuts_{args.subset}.*.jsonl.gz"
+    )
 
     with Pool(max_workers=args.jobs) as pool:
         futures = [
             pool.submit(
-                preprocess_emilia, filename.split("/")[-1], input_dir, output_dir
+                preprocess_emilia,
+                filename.split("/")[-1],
+                input_dir,
+                output_dir,
             )
             for filename in cut_files
         ]
