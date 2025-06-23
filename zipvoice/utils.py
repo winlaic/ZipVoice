@@ -621,15 +621,3 @@ def get_parameter_groups_with_lrs(
         return [
             {"params": params, "lr": lr} for lr, params in lr_to_params.items()
         ]
-
-
-def fix_random_seed(random_seed: int):
-    """
-    Set the same random seed for the libraries and modules.
-    """
-    random.seed(random_seed)
-    np.random.seed(random_seed)
-    torch.random.manual_seed(random_seed)
-    # Ensure deterministic ID creation
-    rd = random.Random()
-    rd.seed(random_seed)

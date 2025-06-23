@@ -54,16 +54,17 @@ import datetime as dt
 import json
 import os
 
-from feature import TorchAudioFbank, TorchAudioFbankConfig
 import numpy as np
 import safetensors.torch
 import torch
 import torchaudio
 
+from feature import TorchAudioFbank, TorchAudioFbankConfig
 from huggingface_hub import hf_hub_download
+from lhotse.utils import fix_random_seed
 from model import get_distill_model, get_model
 from tokenizer import TokenizerEmilia
-from utils import AttributeDict, fix_random_seed
+from utils import AttributeDict
 from vocos import Vocos
 
 
