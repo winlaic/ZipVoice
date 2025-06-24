@@ -90,7 +90,9 @@ class BatchedOptimizer(Optimizer):
         sorted_idx = sorted(
             range(len(batches_names)), key=lambda i: batches_names_keys[i]
         )
-        batches_names = [batches_names[batches_names_keys[idx]] for idx in sorted_idx]
+        batches_names = [
+            batches_names[batches_names_keys[idx]] for idx in sorted_idx
+        ]
         batches = [batches[batches_names_keys[idx]] for idx in sorted_idx]
 
         stacked_params_dict = dict()
@@ -108,7 +110,10 @@ class BatchedOptimizer(Optimizer):
             state = self.state[p]
             p_stacked = torch.stack(batch)
             grad = torch.stack(
-                [torch.zeros_like(p) if p.grad is None else p.grad for p in batch]
+                [
+                    torch.zeros_like(p) if p.grad is None else p.grad
+                    for p in batch
+                ]
             )
             p_stacked.grad = grad
             stacked_params_dict[key] = p_stacked
@@ -165,11 +170,16 @@ def scaling_step(group, p, state, grad):
     except KeyError:
         # we know p.ndim > 1 because we'd have returned above if not, so don't worry
         # about the speial case of dim=[] that pytorch treats inconsistently.
-        param_rms = (p**2).mean(dim=list(range(1, p.ndim)), keepdim=True).sqrt()
+        param_rms = (
+            (p**2).mean(dim=list(range(1, p.ndim)), keepdim=True).sqrt()
+        )
         param_rms = param_rms.to(torch.float)
         scale_exp_avg_sq = torch.zeros_like(param_rms)
         scale_grads = torch.zeros(
-            size_update_period, *param_rms.shape, dtype=torch.float, device=p.device
+            size_update_period,
+            *param_rms.shape,
+            dtype=torch.float,
+            device=p.device,
         )
         state["param_rms"] = param_rms
         state["scale_grads"] = scale_grads
@@ -184,7 +194,9 @@ def scaling_step(group, p, state, grad):
 
     # periodically recompute the value of param_rms.
     if step % size_update_period == size_update_period - 1:
-        param_rms.copy_((p**2).mean(dim=list(range(1, p.ndim)), keepdim=True).sqrt())
+        param_rms.copy_(
+            (p**2).mean(dim=list(range(1, p.ndim)), keepdim=True).sqrt()
+        )
 
     param_min_rms = group["param_min_rms"]
 
@@ -204,7 +216,9 @@ def scaling_step(group, p, state, grad):
         # faster decay at this level.
         beta2_corr = beta2**size_update_period
         scale_exp_avg_sq.mul_(beta2_corr).add_(
-            (scale_grads**2).mean(dim=0),  # mean over dim `size_update_period`
+            (scale_grads**2).mean(
+                dim=0
+            ),  # mean over dim `size_update_period`
             alpha=1 - beta2_corr,
         )  # shape is (batch_size, 1, 1, ...)
 
@@ -215,7 +229,10 @@ def scaling_step(group, p, state, grad):
         denom = scale_exp_avg_sq.sqrt() + eps
 
         scale_step = (
-            -size_lr * (bias_correction2**0.5) * scale_grads.sum(dim=0) / denom
+            -size_lr
+            * (bias_correction2**0.5)
+            * scale_grads.sum(dim=0)
+            / denom
         )
 
         is_too_small = param_rms < param_min_rms
@@ -231,7 +248,9 @@ def scaling_step(group, p, state, grad):
         # We have to look at the trained model for parameters at or around the
         # param_max_rms, because sometimes they can indicate a problem with the
         # topology or settings.
-        scale_step = torch.minimum(scale_step, (param_max_rms - param_rms) / param_rms)
+        scale_step = torch.minimum(
+            scale_step, (param_max_rms - param_rms) / param_rms
+        )
 
         delta.add_(p * scale_step)
 
@@ -461,9 +480,13 @@ class ScaledAdam(BatchedOptimizer):
 
         batch = True
 
-        for group, group_params_names in zip(self.param_groups, self.parameters_names):
+        for group, group_params_names in zip(
+            self.param_groups, self.parameters_names
+        ):
 
-            with self.batched_params(group["params"], group_params_names) as batches:
+            with self.batched_params(
+                group["params"], group_params_names
+            ) as batches:
 
                 # batches is list of pairs (stacked_param, state).  stacked_param is like
                 # a regular parameter, and will have a .grad, but the 1st dim corresponds to
@@ -492,7 +515,9 @@ class ScaledAdam(BatchedOptimizer):
                         cur_step = 0
 
                     grad = (
-                        p.grad if clipping_scale == 1.0 else p.grad.mul_(clipping_scale)
+                        p.grad
+                        if clipping_scale == 1.0
+                        else p.grad.mul_(clipping_scale)
                     )
                     p += momentum_step(group, p.detach(), state, grad)
 
@@ -555,7 +580,10 @@ class ScaledAdam(BatchedOptimizer):
         irregular_estimate_steps = [
             i for i in [10, 20, 40] if i < clipping_update_period
         ]
-        if step % clipping_update_period == 0 or step in irregular_estimate_steps:
+        if (
+            step % clipping_update_period == 0
+            or step in irregular_estimate_steps
+        ):
             # Print some stats.
             # We don't reach here if step == 0 because we would have returned
             # above.
@@ -712,7 +740,9 @@ class ScaledAdam(BatchedOptimizer):
         sorted_by_proportion = {
             k: v
             for k, v in sorted(
-                all_sumsq_orig.items(), key=lambda item: item[1][0], reverse=True
+                all_sumsq_orig.items(),
+                key=lambda item: item[1][0],
+                reverse=True,
             )
         }
         dominant_param_name = next(iter(sorted_by_proportion))
@@ -747,7 +777,9 @@ class LRScheduler(object):
     def __init__(self, optimizer: Optimizer, verbose: bool = False):
         # Attach optimizer
         if not isinstance(optimizer, Optimizer):
-            raise TypeError("{} is not an Optimizer".format(type(optimizer).__name__))
+            raise TypeError(
+                "{} is not an Optimizer".format(type(optimizer).__name__)
+            )
         self.optimizer = optimizer
         self.verbose = verbose
 
@@ -886,7 +918,8 @@ class Eden(LRScheduler):
         factor = (
             (self.batch**2 + self.lr_batches**2) / self.lr_batches**2
         ) ** -0.25 * (
-            ((self.epoch**2 + self.lr_epochs**2) / self.lr_epochs**2) ** -0.25
+            ((self.epoch**2 + self.lr_epochs**2) / self.lr_epochs**2)
+            ** -0.25
         )
         warmup_factor = (
             1.0
@@ -1045,11 +1078,17 @@ class Eve(Optimizer):
         if not 0.0 <= eps:
             raise ValueError("Invalid epsilon value: {}".format(eps))
         if not 0.0 <= betas[0] < 1.0:
-            raise ValueError("Invalid beta parameter at index 0: {}".format(betas[0]))
+            raise ValueError(
+                "Invalid beta parameter at index 0: {}".format(betas[0])
+            )
         if not 0.0 <= betas[1] < 1.0:
-            raise ValueError("Invalid beta parameter at index 1: {}".format(betas[1]))
+            raise ValueError(
+                "Invalid beta parameter at index 1: {}".format(betas[1])
+            )
         if not 0 <= weight_decay <= 0.1:
-            raise ValueError("Invalid weight_decay value: {}".format(weight_decay))
+            raise ValueError(
+                "Invalid weight_decay value: {}".format(weight_decay)
+            )
         if not 0 < target_rms <= 10.0:
             raise ValueError("Invalid target_rms value: {}".format(target_rms))
         defaults = dict(
@@ -1085,7 +1124,9 @@ class Eve(Optimizer):
                 # Perform optimization step
                 grad = p.grad
                 if grad.is_sparse:
-                    raise RuntimeError("AdamW does not support sparse gradients")
+                    raise RuntimeError(
+                        "AdamW does not support sparse gradients"
+                    )
 
                 state = self.state[p]
 
@@ -1123,7 +1164,9 @@ class Eve(Optimizer):
                 if p.numel() > 1:
                     # avoid applying this weight-decay on "scaling factors"
                     # (which are scalar).
-                    is_above_target_rms = p.norm() > (target_rms * (p.numel() ** 0.5))
+                    is_above_target_rms = p.norm() > (
+                        target_rms * (p.numel() ** 0.5)
+                    )
                     p.mul_(1 - (weight_decay * is_above_target_rms))
 
                 p.addcdiv_(exp_avg, denom, value=-step_size)
@@ -1174,7 +1217,8 @@ def _test_scaled_adam(hidden_dim: int):
                 100.0
                 * torch.randn(B, T, E, device=device, dtype=dtype)
                 * input_magnitudes,
-                torch.randn(B, T, E, device=device, dtype=dtype) * output_magnitudes,
+                torch.randn(B, T, E, device=device, dtype=dtype)
+                * output_magnitudes,
             )
             for _ in range(20)
         ]
@@ -1182,7 +1226,9 @@ def _test_scaled_adam(hidden_dim: int):
         if iter == 0:
             optim = Eve(m.parameters(), lr=0.003)
         elif iter == 1:
-            optim = ScaledAdam(m.named_parameters(), lr=0.03, clipping_scale=2.0)
+            optim = ScaledAdam(
+                m.named_parameters(), lr=0.03, clipping_scale=2.0
+            )
         scheduler = Eden(optim, lr_batches=200, lr_epochs=5, verbose=False)
 
         start = timeit.default_timer()

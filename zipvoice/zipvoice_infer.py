@@ -30,7 +30,7 @@ export HF_ENDPOINT=https://hf-mirror.com
 (1) Inference of a single sentence:
 
 python3 zipvoice/zipvoice_infer.py \
-    --model-name "zipvoice_distill" \
+    --model-name "zipvoice" \
     --prompt-wav prompt.wav \
     --prompt-text "I am a prompt." \
     --text "I am a sentence." \
@@ -38,7 +38,7 @@ python3 zipvoice/zipvoice_infer.py \
 
 (2) Inference of a list of sentences:
 python3 zipvoice/zipvoice_infer.py \
-    --model-name "zipvoice-distill" \
+    --model-name "zipvoice" \
     --test-list test.tsv \
     --res-dir results
 
@@ -54,16 +54,17 @@ import datetime as dt
 import json
 import os
 
-from feature import TorchAudioFbank, TorchAudioFbankConfig
 import numpy as np
 import safetensors.torch
 import torch
 import torchaudio
 
+from feature import TorchAudioFbank, TorchAudioFbankConfig
 from huggingface_hub import hf_hub_download
+from lhotse.utils import fix_random_seed
 from model import get_distill_model, get_model
 from tokenizer import TokenizerEmilia
-from utils import AttributeDict, fix_random_seed
+from utils import AttributeDict
 from vocos import Vocos
 
 
@@ -75,7 +76,7 @@ def get_parser():
     parser.add_argument(
         "--model-name",
         type=str,
-        default="zipvoice_distill",
+        default="zipvoice",
         choices=["zipvoice", "zipvoice_distill"],
         help="The model used for inference",
     )

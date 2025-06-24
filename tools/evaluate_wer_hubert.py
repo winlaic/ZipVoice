@@ -1,3 +1,22 @@
+#!/usr/bin/env python3
+# Copyright    2025  Xiaomi Corp.        (authors:  Han Zhu,
+#                                                   Wei Kang)
+#
+# See ../../../../LICENSE for clarification regarding multiple authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 """
 Calculate WER with Hubert models.
 """
@@ -18,7 +37,9 @@ from transformers import pipeline
 def get_parser():
     parser = argparse.ArgumentParser()
 
-    parser.add_argument("--wav-path", type=str, help="path of the speech directory")
+    parser.add_argument(
+        "--wav-path", type=str, help="path of the speech directory"
+    )
     parser.add_argument(
         "--decode-path",
         type=str,
@@ -85,7 +106,9 @@ class SpeechEvalDataset(torch.utils.data.Dataset):
     def __getitem__(self, index: int):
         wav, sampling_rate = sf.read(self.wav_paths[index])
         item = {
-            "array": librosa.resample(wav, orig_sr=sampling_rate, target_sr=16000),
+            "array": librosa.resample(
+                wav, orig_sr=sampling_rate, target_sr=16000
+            ),
             "sampling_rate": 16000,
             "reference": self.transcripts[index],
             "wav_name": self.wav_name[index],
@@ -138,14 +161,18 @@ def main(test_list, wav_path, model_path, decode_path, batch_size, device):
             transcription, text_ref
         )
         if decode_path:
-            fout.write(f"{wav_name}\t{wer}\t{truth}\t{hypo}\t{inse}\t{dele}\t{subs}\n")
+            fout.write(
+                f"{wav_name}\t{wer}\t{truth}\t{hypo}\t{inse}\t{dele}\t{subs}\n"
+            )
         wers.append(float(wer))
         inses.append(float(inse))
         deles.append(float(dele))
         subses.append(float(subs))
         word_nums += word_num
 
-    wer = round((np.sum(subses) + np.sum(deles) + np.sum(inses)) / word_nums * 100, 3)
+    wer = round(
+        (np.sum(subses) + np.sum(deles) + np.sum(inses)) / word_nums * 100, 3
+    )
     subs = round(np.mean(subses) * 100, 3)
     dele = round(np.mean(deles) * 100, 3)
     inse = round(np.mean(inses) * 100, 3)

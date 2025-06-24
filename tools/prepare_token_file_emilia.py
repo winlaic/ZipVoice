@@ -43,7 +43,7 @@ def get_args():
     parser.add_argument(
         "--pinyin",
         type=Path,
-        default=Path("local/pinyin.txt"),
+        default=Path("resources/pinyin.txt"),
         help="Path to the all unique pinyin",
     )
 
@@ -57,7 +57,9 @@ def get_pinyin_tokens(pinyin: Path) -> List[str]:
             x = line.strip()
             initial = to_initials(x, strict=False)
             # don't want to share tokens with espeak tokens, so use tone3 style
-            finals = to_finals_tone3(x, strict=False, neutral_tone_with_five=True)
+            finals = to_finals_tone3(
+                x, strict=False, neutral_tone_with_five=True
+            )
             if initial != "":
                 # don't want to share tokens with espeak tokens, so add a '0' after each initial
                 phones.add(initial + "0")
@@ -76,14 +78,16 @@ def get_token2id(args):
     all_pinyin = get_pinyin_tokens(args.pinyin)
     with open(args.tokens, "w", encoding="utf-8") as f:
         for token, token_id in all_tokens:
-            f.write(f"{token} {token_id}\n")
+            f.write(f"{token}\t{token_id}\n")
         num_espeak_tokens = len(all_tokens)
         for i, pinyin in enumerate(all_pinyin):
-            f.write(f"{pinyin} {num_espeak_tokens + i}\n")
+            f.write(f"{pinyin}\t{num_espeak_tokens + i}\n")
 
 
 if __name__ == "__main__":
-    formatter = "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+    formatter = (
+        "%(asctime)s %(levelname)s [%(filename)s:%(lineno)d] %(message)s"
+    )
     logging.basicConfig(format=formatter, level=logging.INFO)
 
     args = get_args()

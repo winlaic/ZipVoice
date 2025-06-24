@@ -45,6 +45,7 @@ _dollars_re = re.compile(r"\$([0-9\.\,]*[0-9]+)")
 _fraction_re = re.compile(r"([0-9]+)/([0-9]+)")
 _ordinal_re = re.compile(r"[0-9]+(st|nd|rd|th)")
 _number_re = re.compile(r"[0-9]+")
+_whitespace_re = re.compile(r"\s+")
 
 # List of (regular expression, replacement) pairs for abbreviations:
 _abbreviations = [
@@ -159,9 +160,9 @@ def _expand_number(m):
         else:
             return (
                 " "
-                + _inflect.number_to_words(num, andword="", zero="oh", group=2).replace(
-                    ", ", " "
-                )
+                + _inflect.number_to_words(
+                    num, andword="", zero="oh", group=2
+                ).replace(", ", " ")
                 + " "
             )
     else:
@@ -206,6 +207,40 @@ def map_punctuations(text):
     return text
 
 
+def preprocess(text: str) -> str:
+    text = map_punctuations(text)
+    return text
+
+
+def lowercase(text):
+    return text.lower()
+
+
+def uppercase(text):
+    return text.upper()
+
+
+def convert_to_ascii(text):
+    return unidecode(text)
+
+
+def remove_unnecessary_symbols(text):
+    text = re.sub(r"[\(\)\[\]\<\>\"]+", "", text)
+    return text
+
+
+def expand_symbols(text):
+    text = re.sub("\;", ",", text)
+    text = re.sub("\:", ",", text)
+    text = re.sub("\-", " ", text)
+    text = re.sub("\&", "and", text)
+    return text
+
+
+def collapse_whitespace(text):
+    return re.sub(_whitespace_re, " ", text)
+
+
 def is_chinese(char):
     if char >= "\u4e00" and char <= "\u9fa5":
         return True
@@ -225,7 +260,10 @@ def is_alphabet(char):
 def is_hangul(char):
     letters = unicodedata.normalize("NFD", char)
     return all(
-        ["\u1100" <= c <= "\u11ff" or "\u3131" <= c <= "\u318e" for c in letters]
+        [
+            "\u1100" <= c <= "\u11ff" or "\u3131" <= c <= "\u318e"
+            for c in letters
+        ]
     )
 
 
@@ -294,8 +332,15 @@ def get_segment(text: str) -> List[str]:
     return segments
 
 
-def preprocess(text: str) -> str:
-    text = map_punctuations(text)
+def custom_english_cleaners(text):
+    """Custom pipeline for English text, including number and abbreviation expansion."""
+    text = lowercase(text)
+    text = normalize_numbers(text)
+    text = expand_abbreviations(text)
+    text = expand_symbols(text)
+    text = remove_unnecessary_symbols(text)
+    text = uppercase(text)
+    text = collapse_whitespace(text)
     return text
 
 
@@ -304,7 +349,10 @@ def tokenize_ZH(text: str) -> List[str]:
         text = number_to_chinese(text)
         segs = list(jieba.cut(text))
         full = lazy_pinyin(
-            segs, style=Style.TONE3, tone_sandhi=True, neutral_tone_with_five=True
+            segs,
+            style=Style.TONE3,
+            tone_sandhi=True,
+            neutral_tone_with_five=True,
         )
         phones = []
         for x in full:
@@ -314,7 +362,9 @@ def tokenize_ZH(text: str) -> List[str]:
                 continue
             initial = to_initials(x, strict=False)
             # don't want to share tokens with espeak tokens, so use tone3 style
-            final = to_finals_tone3(x, strict=False, neutral_tone_with_five=True)
+            final = to_finals_tone3(
+                x, strict=False, neutral_tone_with_five=True
+            )
             if initial != "":
                 # don't want to share tokens with espeak tokens, so add a '0' after each initial
                 phones.append(initial + "0")
@@ -398,7 +448,7 @@ class TokenizerEmilia(object):
                     phoneme = tokenize_ZH(seg[0])
                 else:
                     if seg[1] != "en":
-                        logging.warning(
+                        logging.debug(
                             f"The lang should be en, given {seg[1]}, skipping segment : {seg}"
                         )
                         continue
@@ -422,14 +472,16 @@ class TokenizerEmilia(object):
         Returns:
           Return a list of token id list [utterance][token_id]
         """
-        assert self.has_tokens, "Please initialize Tokenizer with a tokens file."
+        assert (
+            self.has_tokens
+        ), "Please initialize Tokenizer with a tokens file."
         token_ids = []
 
         for tks in tokens:
             ids = []
             for t in tks:
                 if t not in self.token2id:
-                    logging.warning(f"Skip OOV {t}")
+                    logging.debug(f"Skip OOV {t}")
                     continue
                 ids.append(self.token2id[t])
 
@@ -471,14 +523,6 @@ class TokenizerLibriTTS(object):
                     self.token2id[token] = id
             self.pad_id = self.token2id["_"]  # padding
             self.vocab_size = len(self.token2id)
-        try:
-            from tacotron_cleaner.cleaners import custom_english_cleaners as cleaner
-        except Exception as ex:
-            raise RuntimeError(
-                f"{ex}\nPlease run\n"
-                "pip install espnet_tts_frontend`, refer to https://github.com/espnet/espnet_tts_frontend/"
-            )
-        self.cleaner = cleaner
 
     def texts_to_token_ids(
         self,
@@ -500,7 +544,7 @@ class TokenizerLibriTTS(object):
         """
         for i in range(len(texts)):
             # Text normalization
-            texts[i] = self.cleaner(texts[i])
+            texts[i] = custom_english_cleaners(texts[i])
 
         if self.type == "bpe":
             token_ids_list = self.sp.encode(texts)
@@ -515,7 +559,7 @@ class TokenizerLibriTTS(object):
                 token_ids = []
                 for t in tokens:
                     if t not in self.token2id:
-                        logging.warning(f"Skip OOV {t}")
+                        logging.debug(f"Skip OOV {t}")
                         continue
                     token_ids.append(self.token2id[t])
 
@@ -526,7 +570,7 @@ class TokenizerLibriTTS(object):
                 token_ids = []
                 for t in text:
                     if t not in self.token2id:
-                        logging.warning(f"Skip OOV {t}")
+                        logging.debug(f"Skip OOV {t}")
                         continue
                     token_ids.append(self.token2id[t])
 
@@ -552,7 +596,7 @@ class TokenizerLibriTTS(object):
             token_ids = []
             for t in tokens:
                 if t not in self.token2id:
-                    logging.warning(f"Skip OOV {t}")
+                    logging.debug(f"Skip OOV {t}")
                     continue
                 token_ids.append(self.token2id[t])
 

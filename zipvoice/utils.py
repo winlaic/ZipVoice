@@ -1,11 +1,16 @@
 import collections
+import json
+import logging
 import numpy as np
+import os
 import random
 import socket
 import subprocess
 import sys
 
+
 from collections import defaultdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple, Union
 
@@ -37,7 +42,7 @@ class AttributeDict(dict):
         tmp = {}
         for k, v in self.items():
             # PosixPath is ont JSON serializable
-            if isinstance(v, (pathlib.Path, torch.device, torch.dtype)):
+            if isinstance(v, (Path, torch.device, torch.dtype)):
                 v = str(v)
             tmp[k] = v
         return json.dumps(tmp, indent=indent, sort_keys=True)
@@ -171,11 +176,9 @@ def prepare_input(
     params: AttributeDict,
     batch: dict,
     device: torch.device,
-    tokenizer: Optional[Any] = None,
-    return_tokens: bool = False,
-    return_feature: bool = False,
+    return_tokens: bool = True,
+    return_feature: bool = True,
     return_audio: bool = False,
-    return_prompt: bool = False,
 ):
     """
     Parse the features and targets of the current batch.
@@ -186,21 +189,13 @@ def prepare_input(
         It is the return value from iterating
         `lhotse.dataset.K2SpeechRecognitionDataset`. See its documentation
         for the format of the `batch`.
-      sp:
-        Used to convert text to bpe tokens.
       device:
         The device of Tensor.
     """
     return_list = []
 
     if return_tokens:
-        assert tokenizer is not None
-
-        if params.token_type == "phone":
-            tokens = tokenizer.tokens_to_token_ids(batch["tokens"])
-        else:
-            tokens = tokenizer.texts_to_token_ids(batch["text"])
-        return_list += [tokens]
+        return_list += [batch["tokens"]]
 
     if return_feature:
         features = batch["features"].to(device)
@@ -209,30 +204,6 @@ def prepare_input(
 
     if return_audio:
         return_list += [batch["audio"], batch["audio_lens"]]
-
-    if return_prompt:
-        if return_tokens:
-            if params.token_type == "phone":
-                prompt_tokens = tokenizer.tokens_to_token_ids(
-                    batch["prompt"]["tokens"]
-                )
-            else:
-                prompt_tokens = tokenizer.texts_to_token_ids(
-                    batch["prompt"]["text"]
-                )
-            return_list += [prompt_tokens]
-        if return_feature:
-            prompt_features = batch["prompt"]["features"].to(device)
-            prompt_features_lens = batch["prompt"]["features_lens"].to(device)
-            return_list += [
-                prompt_features * params.feat_scale,
-                prompt_features_lens,
-            ]
-        if return_audio:
-            return_list += [
-                batch["prompt"]["audio"],
-                batch["prompt"]["audio_lens"],
-            ]
 
     return return_list
 
@@ -534,7 +505,7 @@ def get_env_info() -> Dict[str, Any]:
         "torch-version": str(torch.__version__),
         "torch-cuda-available": torch.cuda.is_available(),
         "torch-cuda-version": torch.version.cuda,
-        "python-version": sys.version[:3],
+        "python-version": sys.version[:4],
         "zipvoice-git-branch": get_git_branch_name(),
         "zipvoice-git-sha1": get_git_sha1(),
         "zipvoice-git-date": get_git_date(),
@@ -621,15 +592,3 @@ def get_parameter_groups_with_lrs(
         return [
             {"params": params, "lr": lr} for lr, params in lr_to_params.items()
         ]
-
-
-def fix_random_seed(random_seed: int):
-    """
-    Set the same random seed for the libraries and modules.
-    """
-    random.seed(random_seed)
-    np.random.seed(random_seed)
-    torch.random.manual_seed(random_seed)
-    # Ensure deterministic ID creation
-    rd = random.Random()
-    rd.seed(random_seed)

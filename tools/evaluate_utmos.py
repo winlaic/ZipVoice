@@ -1,3 +1,22 @@
+#!/usr/bin/env python3
+# Copyright    2025  Xiaomi Corp.        (authors:  Han Zhu
+#                                                   Wei Kang)
+#
+# See ../../../../LICENSE for clarification regarding multiple authors
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+
 """
 Calculate UTMOS score with automatic Mean Opinion Score (MOS) prediction system
 adapted from https://huggingface.co/spaces/sarulab-speech/UTMOS-demo
@@ -50,7 +69,9 @@ class UTMOSScore:
     def __init__(self, utmos_model_path, ssl_model_path):
         self.sample_rate = 16000
         self.device = (
-            torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+            torch.device("cuda")
+            if torch.cuda.is_available()
+            else torch.device("cpu")
         )
         self.model = (
             BaselineLightningModule.load_from_checkpoint(
@@ -100,7 +121,9 @@ class UTMOSScore:
 
         score_lst = []
         for fname in tqdm(os.listdir(dir)):
-            speech = _load_speech_task(os.path.join(dir, fname), self.sample_rate)
+            speech = _load_speech_task(
+                os.path.join(dir, fname), self.sample_rate
+            )
             speech = speech.to(self.device)
             with torch.no_grad():
                 score = self.score(speech)
@@ -288,7 +311,8 @@ if __name__ == "__main__":
     parser = get_parser()
     args = parser.parse_args()
     UTMOS = UTMOSScore(
-        utmos_model_path=args.utmos_model_path, ssl_model_path=args.ssl_model_path
+        utmos_model_path=args.utmos_model_path,
+        ssl_model_path=args.ssl_model_path,
     )
     score = UTMOS.score_dir(args.wav_path)
     logging.info(f"UTMOS score: {score:.2f}")

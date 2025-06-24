@@ -25,18 +25,15 @@ import random
 from typing import Optional, Tuple, Union
 
 import torch
-from scaling import (
-    Identity,  # more friendly to backward hooks than nn.Identity(), for diagnostic reasons.
-)
-from scaling import (
-    ScaledLinear,  # not as in other dirs.. just scales down initial parameter values.
-)
+
 from scaling import (
     ActivationDropoutAndLinear,
     Balancer,
     BiasNorm,
     Dropout2,
     FloatLike,
+    Identity,  # more friendly to backward hooks than nn.Identity(), for diagnostic reasons.
+    ScaledLinear,  # scales down initial parameter values.
     ScheduledFloat,
     SwooshR,
     Whiten,
@@ -58,7 +55,9 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     half = dim // 2
     freqs = torch.exp(
         -math.log(max_period)
-        * torch.arange(start=0, end=half, dtype=torch.float32, device=timesteps.device)
+        * torch.arange(
+            start=0, end=half, dtype=torch.float32, device=timesteps.device
+        )
         / half
     )
 
@@ -68,7 +67,9 @@ def timestep_embedding(timesteps, dim, max_period=10000):
     args = timesteps[..., None].float() * freqs[None]
     embedding = torch.cat([torch.cos(args), torch.sin(args)], dim=-1)
     if dim % 2:
-        embedding = torch.cat([embedding, torch.zeros_like(embedding[..., :1])], dim=-1)
+        embedding = torch.cat(
+            [embedding, torch.zeros_like(embedding[..., :1])], dim=-1
+        )
     return embedding
 
 
@@ -141,7 +142,9 @@ class TTSZipformer(nn.Module):
             if len(x) == 1:
                 x = x * len(downsampling_factor)
             else:
-                assert len(x) == len(downsampling_factor) and isinstance(x[0], int)
+                assert len(x) == len(downsampling_factor) and isinstance(
+                    x[0], int
+                )
             return x
 
         def _assert_downsampling_factor(factors):
@@ -157,7 +160,9 @@ class TTSZipformer(nn.Module):
         _assert_downsampling_factor(downsampling_factor)
         self.downsampling_factor = downsampling_factor  # tuple
         num_encoder_layers = _to_tuple(num_encoder_layers)
-        self.cnn_module_kernel = cnn_module_kernel = _to_tuple(cnn_module_kernel)
+        self.cnn_module_kernel = cnn_module_kernel = _to_tuple(
+            cnn_module_kernel
+        )
         self.encoder_dim = encoder_dim
         self.num_encoder_layers = num_encoder_layers
         self.query_head_dim = query_head_dim
@@ -229,7 +234,10 @@ class TTSZipformer(nn.Module):
 
         if self.use_guidance_scale_embed:
             self.guidance_scale_embed = ScaledLinear(
-                guidance_scale_embed_dim, time_embed_dim, bias=False, initial_scale=0.1
+                guidance_scale_embed_dim,
+                time_embed_dim,
+                bias=False,
+                initial_scale=0.1,
             )
         else:
             self.guidance_scale_embed = None
@@ -264,7 +272,9 @@ class TTSZipformer(nn.Module):
                     guidance_scale.dim() == 1 or guidance_scale.dim() == 2
                 ), guidance_scale.shape
                 guidance_scale_emb = self.guidance_scale_embed(
-                    timestep_embedding(guidance_scale, self.guidance_scale_embed_dim)
+                    timestep_embedding(
+                        guidance_scale, self.guidance_scale_embed_dim
+                    )
                 )
                 time_emb = time_emb + guidance_scale_emb
             time_emb = self.time_embed(time_emb)
@@ -376,7 +386,9 @@ class Zipformer2EncoderLayer(nn.Module):
             embed_dim, (feedforward_dim * 3) // 4, dropout
         )
 
-        self.feed_forward2 = FeedforwardModule(embed_dim, feedforward_dim, dropout)
+        self.feed_forward2 = FeedforwardModule(
+            embed_dim, feedforward_dim, dropout
+        )
 
         self.feed_forward3 = FeedforwardModule(
             embed_dim, (feedforward_dim * 5) // 4, dropout
@@ -464,7 +476,9 @@ class Zipformer2EncoderLayer(nn.Module):
         ):
             return None
         batch_size = x.shape[1]
-        mask = (torch.rand(batch_size, 1, device=x.device) > dropout_rate).to(x.dtype)
+        mask = (torch.rand(batch_size, 1, device=x.device) > dropout_rate).to(
+            x.dtype
+        )
         return mask
 
     def sequence_dropout(self, x: Tensor, dropout_rate: float) -> Tensor:
@@ -532,7 +546,9 @@ class Zipformer2EncoderLayer(nn.Module):
         selected_attn_weights = attn_weights[0:1]
         if torch.jit.is_scripting() or torch.jit.is_tracing():
             pass
-        elif self.training and random.random() < float(self.const_attention_rate):
+        elif self.training and random.random() < float(
+            self.const_attention_rate
+        ):
             # Make attention weights constant.  The intention is to
             # encourage these modules to do something similar to an
             # averaging-over-time operation.
@@ -548,7 +564,9 @@ class Zipformer2EncoderLayer(nn.Module):
         na = self.balancer_na(self.nonlin_attention(src, selected_attn_weights))
 
         src = src + (
-            na if self_attn_dropout_mask is None else na * self_attn_dropout_mask
+            na
+            if self_attn_dropout_mask is None
+            else na * self_attn_dropout_mask
         )
 
         self_attn = self.self_attn1(src, attn_weights)
@@ -563,7 +581,9 @@ class Zipformer2EncoderLayer(nn.Module):
             if torch.jit.is_scripting() or torch.jit.is_tracing():
                 conv_skip_rate = 0.0
             else:
-                conv_skip_rate = float(self.conv_skip_rate) if self.training else 0.0
+                conv_skip_rate = (
+                    float(self.conv_skip_rate) if self.training else 0.0
+                )
 
             if time_emb is not None:
                 src = src + time_emb
@@ -600,7 +620,9 @@ class Zipformer2EncoderLayer(nn.Module):
             if torch.jit.is_scripting() or torch.jit.is_tracing():
                 conv_skip_rate = 0.0
             else:
-                conv_skip_rate = float(self.conv_skip_rate) if self.training else 0.0
+                conv_skip_rate = (
+                    float(self.conv_skip_rate) if self.training else 0.0
+                )
 
             if time_emb is not None:
                 src = src + time_emb
@@ -746,7 +768,9 @@ class BypassModule(nn.Module):
         embed_dim: int,
         skip_rate: FloatLike = 0.0,
         straight_through_rate: FloatLike = 0.0,
-        scale_min: FloatLike = ScheduledFloat((0.0, 0.9), (20000.0, 0.2), default=0),
+        scale_min: FloatLike = ScheduledFloat(
+            (0.0, 0.9), (20000.0, 0.2), default=0
+        ),
         scale_max: FloatLike = 1.0,
     ):
         super().__init__()
@@ -761,15 +785,23 @@ class BypassModule(nn.Module):
         # or (batch_size, num_channels,).  This is actually the
         # scale on the non-residual term, so 0 corresponds to bypassing
         # this module.
-        if torch.jit.is_scripting() or torch.jit.is_tracing() or not self.training:
+        if (
+            torch.jit.is_scripting()
+            or torch.jit.is_tracing()
+            or not self.training
+        ):
             return self.bypass_scale
         else:
             ans = limit_param_value(
-                self.bypass_scale, min=float(self.scale_min), max=float(self.scale_max)
+                self.bypass_scale,
+                min=float(self.scale_min),
+                max=float(self.scale_max),
             )
             skip_rate = float(self.skip_rate)
             if skip_rate != 0.0:
-                mask = torch.rand((batch_size, 1), device=ans.device) > skip_rate
+                mask = (
+                    torch.rand((batch_size, 1), device=ans.device) > skip_rate
+                )
                 ans = ans * mask
                 # now ans is of shape (batch_size, num_channels), and is zero for sequences
                 # on which we have randomly chosen to do layer-skipping.
@@ -880,7 +912,9 @@ class SimpleDownsample(torch.nn.Module):
         # Pad to an exact multiple of self.downsample
         # right-pad src, repeating the last element.
         pad = d_seq_len * ds - seq_len
-        src_extra = src[src.shape[0] - 1 :].expand(pad, src.shape[1], src.shape[2])
+        src_extra = src[src.shape[0] - 1 :].expand(
+            pad, src.shape[1], src.shape[2]
+        )
         src = torch.cat((src, src_extra), dim=0)
         assert src.shape[0] == d_seq_len * ds
 
@@ -913,7 +947,9 @@ class SimpleUpsample(torch.nn.Module):
         """
         upsample = self.upsample
         (seq_len, batch_size, num_channels) = src.shape
-        src = src.unsqueeze(1).expand(seq_len, upsample, batch_size, num_channels)
+        src = src.unsqueeze(1).expand(
+            seq_len, upsample, batch_size, num_channels
+        )
         src = src.reshape(seq_len * upsample, batch_size, num_channels)
         return src
 
@@ -973,7 +1009,11 @@ class CompactRelPositionalEncoding(torch.nn.Module):
                 return
 
         # if T == 4, x would contain [ -3, -2, 1, 0, 1, 2, 3 ]
-        x = torch.arange(-(T - 1), T, device=x.device).to(torch.float32).unsqueeze(1)
+        x = (
+            torch.arange(-(T - 1), T, device=x.device)
+            .to(torch.float32)
+            .unsqueeze(1)
+        )
 
         freqs = 1 + torch.arange(self.embed_dim // 2, device=x.device)
 
@@ -987,7 +1027,10 @@ class CompactRelPositionalEncoding(torch.nn.Module):
         x_compressed = (
             compression_length
             * x.sign()
-            * ((x.abs() + compression_length).log() - math.log(compression_length))
+            * (
+                (x.abs() + compression_length).log()
+                - math.log(compression_length)
+            )
         )
 
         # if self.length_factor == 1.0, then length_scale is chosen so that the
@@ -999,7 +1042,9 @@ class CompactRelPositionalEncoding(torch.nn.Module):
         # note for machine implementations: if atan is not available, we can use:
         #   x.sign() * ((1 / (x.abs() + 1)) - 1)  * (-math.pi/2)
         #  check on wolframalpha.com: plot(sign(x) *  (1 / ( abs(x) + 1) - 1 ) * -pi/2 , atan(x))
-        x_atan = (x_compressed / length_scale).atan()  # results between -pi and pi
+        x_atan = (
+            x_compressed / length_scale
+        ).atan()  # results between -pi and pi
 
         cosines = (x_atan * freqs).cos()
         sines = (x_atan * freqs).sin()
@@ -1064,7 +1109,9 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
         query_head_dim: int,
         pos_head_dim: int,
         dropout: float = 0.0,
-        pos_emb_skip_rate: FloatLike = ScheduledFloat((0.0, 0.5), (4000.0, 0.0)),
+        pos_emb_skip_rate: FloatLike = ScheduledFloat(
+            (0.0, 0.5), (4000.0, 0.0)
+        ),
     ) -> None:
         super().__init__()
         self.embed_dim = embed_dim
@@ -1073,7 +1120,9 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
         self.pos_head_dim = pos_head_dim
         self.dropout = dropout
         self.pos_emb_skip_rate = copy.deepcopy(pos_emb_skip_rate)
-        self.name = None  # will be overwritten in training code; for diagnostics.
+        self.name = (
+            None  # will be overwritten in training code; for diagnostics.
+        )
 
         key_head_dim = query_head_dim
         in_proj_dim = (query_head_dim + key_head_dim + pos_head_dim) * num_heads
@@ -1084,7 +1133,10 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
         # to be used with the ScaledAdam optimizer; with most other optimizers,
         # it would be necessary to apply the scaling factor in the forward function.
         self.in_proj = ScaledLinear(
-            embed_dim, in_proj_dim, bias=True, initial_scale=query_head_dim**-0.25
+            embed_dim,
+            in_proj_dim,
+            bias=True,
+            initial_scale=query_head_dim**-0.25,
         )
 
         self.whiten_keys = Whiten(
@@ -1162,7 +1214,9 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
         )
 
         q = self.copy_query(q)  # for diagnostics only, does nothing.
-        k = self.whiten_keys(self.balance_keys(k))  # does nothing in the forward pass.
+        k = self.whiten_keys(
+            self.balance_keys(k)
+        )  # does nothing in the forward pass.
         p = self.copy_pos_query(p)  # for diagnostics only, does nothing.
 
         q = q.reshape(seq_len, batch_size, num_heads, query_head_dim)
@@ -1180,15 +1234,17 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
         if torch.jit.is_scripting() or torch.jit.is_tracing():
             # We can't put random.random() in the same line
             use_pos_scores = True
-        elif not self.training or random.random() >= float(self.pos_emb_skip_rate):
+        elif not self.training or random.random() >= float(
+            self.pos_emb_skip_rate
+        ):
             use_pos_scores = True
 
         if use_pos_scores:
             pos_emb = self.linear_pos(pos_emb)
             seq_len2 = 2 * seq_len - 1
-            pos_emb = pos_emb.reshape(-1, seq_len2, num_heads, pos_head_dim).permute(
-                2, 0, 3, 1
-            )
+            pos_emb = pos_emb.reshape(
+                -1, seq_len2, num_heads, pos_head_dim
+            ).permute(2, 0, 3, 1)
             # pos shape now: (head, {1 or batch_size}, pos_dim, seq_len2)
 
             # (head, batch, time1, pos_dim) x (head, 1, pos_dim, seq_len2) -> (head, batch, time1, seq_len2)
@@ -1205,7 +1261,9 @@ class RelPositionMultiheadAttentionWeights(nn.Module):
                 indexes = rows + cols
                 pos_scores = pos_scores.reshape(-1, n)
                 pos_scores = torch.gather(pos_scores, dim=1, index=indexes)
-                pos_scores = pos_scores.reshape(num_heads, batch_size, time1, seq_len)
+                pos_scores = pos_scores.reshape(
+                    num_heads, batch_size, time1, seq_len
+                )
             else:
                 pos_scores = pos_scores.as_strided(
                     (num_heads, batch_size, seq_len, seq_len),
@@ -1311,7 +1369,9 @@ class SelfAttention(nn.Module):
         value_head_dim: int,
     ) -> None:
         super().__init__()
-        self.in_proj = nn.Linear(embed_dim, num_heads * value_head_dim, bias=True)
+        self.in_proj = nn.Linear(
+            embed_dim, num_heads * value_head_dim, bias=True
+        )
 
         self.out_proj = ScaledLinear(
             num_heads * value_head_dim, embed_dim, bias=True, initial_scale=0.05
@@ -1367,7 +1427,9 @@ class SelfAttention(nn.Module):
 class FeedforwardModule(nn.Module):
     """Feedforward module in TTSZipformer model."""
 
-    def __init__(self, embed_dim: int, feedforward_dim: int, dropout: FloatLike):
+    def __init__(
+        self, embed_dim: int, feedforward_dim: int, dropout: FloatLike
+    ):
         super(FeedforwardModule, self).__init__()
         self.in_proj = nn.Linear(embed_dim, feedforward_dim)
 
@@ -1635,7 +1697,9 @@ class ConvolutionModule(nn.Module):
         x = x.permute(1, 2, 0)  # (#batch, channels, time).
 
         if src_key_padding_mask is not None:
-            x = x.masked_fill(src_key_padding_mask.unsqueeze(1).expand_as(x), 0.0)
+            x = x.masked_fill(
+                src_key_padding_mask.unsqueeze(1).expand_as(x), 0.0
+            )
 
         x = self.depthwise_conv(x)
 

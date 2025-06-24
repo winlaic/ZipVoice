@@ -18,7 +18,7 @@
 
 import logging
 from pathlib import Path
-from typing import Any, Dict, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import torch
 import torch.nn as nn
@@ -26,6 +26,8 @@ from lhotse.dataset.sampling.base import CutSampler
 from torch.cuda.amp import GradScaler
 from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.optim import Optimizer
+
+from utils import AttributeDict
 
 # use duck typing for LRScheduler since we have different possibilities, see
 # our class LRScheduler.
@@ -211,7 +213,7 @@ def average_checkpoints_with_averaged_model(
     filename_start: str,
     filename_end: str,
     device: torch.device = torch.device("cpu"),
-) -> Dict[str, Tensor]:
+) -> Dict[str, torch.Tensor]:
     """Average model parameters over the range with given
     start model (excluded) and end model.
 
@@ -315,8 +317,87 @@ def remove_checkpoints(
         os.remove(c)
 
 
+def resume_checkpoint(
+    params: AttributeDict,
+    model: nn.Module,
+    model_avg: nn.Module,
+    model_ema: Optional[nn.Module] = None,
+) -> Optional[Dict[str, Any]]:
+    """Load checkpoint from file.
+
+    If params.start_epoch is larger than 1, it will load the checkpoint from
+    `params.start_epoch - 1`.
+
+    Apart from loading state dict for `model` and `optimizer` it also updates
+    `best_train_epoch`, `best_train_loss`, `best_valid_epoch`,
+    and `best_valid_loss` in `params`.
+
+    Args:
+      params:
+        The return value of :func:`get_params`.
+      model:
+        The training model.
+    Returns:
+      Return a dict containing previously saved training info.
+    """
+    filename = params.exp_dir / f"epoch-{params.start_epoch-1}.pt"
+
+    assert filename.is_file(), f"{filename} does not exist!"
+
+    saved_params = load_checkpoint(
+        filename,
+        model=model,
+        model_avg=model_avg,
+        model_ema=model_ema,
+        strict=True,
+    )
+
+    if params.start_epoch > 1:
+        keys = [
+            "best_train_epoch",
+            "best_valid_epoch",
+            "batch_idx_train",
+            "best_train_loss",
+            "best_valid_loss",
+        ]
+        for k in keys:
+            params[k] = saved_params[k]
+
+    return saved_params
+
+
+def average_state_dict(
+    state_dict_1: Dict[str, torch.Tensor],
+    state_dict_2: Dict[str, torch.Tensor],
+    weight_1: float,
+    weight_2: float,
+    scaling_factor: float = 1.0,
+) -> Dict[str, torch.Tensor]:
+    """Average two state_dict with given weights:
+    state_dict_1 = (state_dict_1 * weight_1 + state_dict_2 * weight_2)
+      * scaling_factor
+    It is an in-place operation on state_dict_1 itself.
+    """
+    # Identify shared parameters. Two parameters are said to be shared
+    # if they have the same data_ptr
+    uniqued: Dict[int, str] = dict()
+    for k, v in state_dict_1.items():
+        v_data_ptr = v.data_ptr()
+        if v_data_ptr in uniqued:
+            continue
+        uniqued[v_data_ptr] = k
+
+    uniqued_names = list(uniqued.values())
+    for k in uniqued_names:
+        v = state_dict_1[k]
+        if torch.is_floating_point(v):
+            v *= weight_1
+            v += state_dict_2[k].to(device=state_dict_1[k].device) * weight_2
+            v *= scaling_factor
+
+
 def update_averaged_model(
-    params: Dict[str, Tensor],
+    params: Dict[str, torch.Tensor],
     model_cur: Union[nn.Module, DDP],
     model_avg: nn.Module,
 ) -> None:
