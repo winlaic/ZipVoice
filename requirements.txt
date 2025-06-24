@@ -1,7 +1,7 @@
 --find-links https://k2-fsa.github.io/icefall/piper_phonemize.html
 
-torch
-torchaudio
+torch<=2.6.0
+torchaudio<=2.6.0
 numpy
 lhotse
 huggingface_hub
