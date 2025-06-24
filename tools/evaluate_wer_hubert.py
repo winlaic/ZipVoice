@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# Copyright    2025  Xiaomi Corp.        (authors:  Zhu Han
+# Copyright    2025  Xiaomi Corp.        (authors:  Han Zhu,
 #                                                   Wei Kang)
 #
 # See ../../../../LICENSE for clarification regarding multiple authors
