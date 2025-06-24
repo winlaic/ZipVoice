@@ -637,6 +637,7 @@ def train_one_epoch(
             and not params.print_diagnostics
         ) or (
             params.valid_interval is not None
+            and params.batch_idx_train > 0
             and params.batch_idx_train % params.valid_interval == 0
             and not params.print_diagnostics
         ):

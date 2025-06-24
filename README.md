@@ -56,7 +56,7 @@ To generate speech with our pre-trained ZipVoice or ZipVoice-Distill models, use
 ### 1. Inference of a single sentence:
 ```bash
 python3 zipvoice/zipvoice_infer.py \
-    --model-name "zipvoice_distill" \
+    --model-name "zipvoice" \
     --prompt-wav prompt.wav \
     --prompt-text "I am the transcription of the prompt wav." \
     --text "I am the text to be synthesized." \
@@ -64,7 +64,7 @@ python3 zipvoice/zipvoice_infer.py \
 
 # Example with a pre-defined prompt wav and text
 python3 zipvoice/zipvoice_infer.py \
-    --model-name "zipvoice_distill" \
+    --model-name "zipvoice" \
     --prompt-wav resources/prompt.wav \
     --prompt-text "Some call me nature, others call me mother nature. I've been here for over four point five billion years, twenty two thousand five hundred times longer than you." \
     --text "Welcome to use our tts model, have fun!" \
@@ -74,7 +74,7 @@ python3 zipvoice/zipvoice_infer.py \
 ### 2. Inference of a list of sentences:
 ```bash
 python3 zipvoice/zipvoice_infer.py \
-    --model-name "zipvoice_distill" \
+    --model-name "zipvoice" \
     --test-list test.tsv \
     --res-dir results/test
 ```
@@ -94,18 +94,17 @@ The following steps show how to train a model from scratch on Emilia and LibriTT
 
 ### 0. Install dependencies for training
 
+For now, zipvoice requires k2 for more memory efficient training.
+
 ```bash
-# Install pytorch and k2.
-# If you want to use different versions, please refer to https://k2-fsa.org/get-started/k2/ for details.
+# Install k2.
+# Please refer to https://k2-fsa.org/get-started/k2/ for details.
 # For users in China mainland, please refer to https://k2-fsa.org/zh-CN/get-started/k2/
 
 # Note: Make sure you have installed the correct version of PyTorch and k2 that matches your CUDA version.
-# For example, if want to use pytorch 2.5.1 and you are using CUDA 12.1, you can install PyTorch and k2 as follows:
+# For example, if you are using pytorch 2.5.1 and CUDA 12.1, you can install k2 as follows:
 
-pip install torch==2.5.1 torchaudio==2.5.1 --index-url https://download.pytorch.org/whl/cu121
 pip install k2==1.24.4.dev20250208+cuda12.1.torch2.5.1 -f https://k2-fsa.github.io/k2/cuda.html
-
-pip install -r ../../requirements.txt
 ```
 
 ### 1. Data Preparation

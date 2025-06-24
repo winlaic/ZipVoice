@@ -318,14 +318,17 @@ def remove_checkpoints(
 
 
 def resume_checkpoint(
-    params: AttributeDict, model: nn.Module, model_avg: nn.Module
+    params: AttributeDict,
+    model: nn.Module,
+    model_avg: nn.Module,
+    model_ema: Optional[nn.Module] = None,
 ) -> Optional[Dict[str, Any]]:
     """Load checkpoint from file.
 
     If params.start_epoch is larger than 1, it will load the checkpoint from
     `params.start_epoch - 1`.
 
-    Apart from loading state dict for `model` it also updates
+    Apart from loading state dict for `model` and `optimizer` it also updates
     `best_train_epoch`, `best_train_loss`, `best_valid_epoch`,
     and `best_valid_loss` in `params`.
 
@@ -337,27 +340,28 @@ def resume_checkpoint(
     Returns:
       Return a dict containing previously saved training info.
     """
-    if params.start_epoch > 1:
-        filename = params.exp_dir / f"epoch-{params.start_epoch-1}.pt"
-    else:
-        return None
+    filename = params.exp_dir / f"epoch-{params.start_epoch-1}.pt"
 
-    logging.info(f"Resuming from file {filename}")
     assert filename.is_file(), f"{filename} does not exist!"
 
     saved_params = load_checkpoint(
-        filename, model=model, model_avg=model_avg, strict=True
+        filename,
+        model=model,
+        model_avg=model_avg,
+        model_ema=model_ema,
+        strict=True,
     )
 
-    keys = [
-        "best_train_epoch",
-        "best_valid_epoch",
-        "batch_idx_train",
-        "best_train_loss",
-        "best_valid_loss",
-    ]
-    for k in keys:
-        params[k] = saved_params[k]
+    if params.start_epoch > 1:
+        keys = [
+            "best_train_epoch",
+            "best_valid_epoch",
+            "batch_idx_train",
+            "best_train_loss",
+            "best_valid_loss",
+        ]
+        for k in keys:
+            params[k] = saved_params[k]
 
     return saved_params
 
