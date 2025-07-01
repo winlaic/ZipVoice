@@ -71,13 +71,14 @@ def tokenize_by_CJK_char(text: str) -> str:
 
     Example:
     input = "你好世界是 hello world 的中文"
-    output = ["你", "好", "世", "界", "是", "hello world", "的", "中", "文"]
+    output = ["你", "好", "世", "界", "是", "hello", "world", "的", "中", "文"]
     """
     pattern = re.compile(
         r"([\u1100-\u11ff\u2e80-\ua4cf\ua840-\uD7AF\uF900-\uFAFF\uFE30-\uFE4F\uFF65-\uFFDC\U00020000-\U0002FFFF])"
     )
     chars = pattern.split(text.strip())
-    return [w.strip() for w in chars if w.strip()]
+    merged = " ".join([w.strip() for w in chars if w.strip()])
+    return merged.split()
 
 
 def is_hangul(char):
