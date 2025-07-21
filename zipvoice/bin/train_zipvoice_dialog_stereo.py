@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-# Copyright    2024-2025  Xiaomi Corp.        (authors: Wei Kang,
-#                                                       Han Zhu)
+# Copyright    2025  Xiaomi Corp.        (authors: Han Zhu)
 #
 # See ../../../../LICENSE for clarification regarding multiple authors
 #
@@ -17,22 +16,19 @@
 # limitations under the License.
 
 """
-This script trains a ZipVoice model with the flow-matching loss.
+This script trains a ZipVoice-Dialog model.
 
 Usage:
 
-python3 -m zipvoice.bin.train_zipvoice \
+python3 -m zipvoice.bin.train_zipvoice_dialog_stereo \
     --world-size 8 \
     --use-fp16 1 \
-    --num-epochs 11 \
+    --base-lr 0.002 \
     --max-duration 500 \
-    --lr-hours 30000 \
     --model-config conf/zipvoice_base.json \
-    --tokenizer emilia \
-    --token-file "data/tokens_emilia.txt" \
-    --dataset emilia \
+    --token-file "data/tokens_dialog.txt" \
     --manifest-dir data/fbank \
-    --exp-dir exp/zipvoice
+    --exp-dir exp/zipvoice_dialog_stereo
 """
 
 import argparse
@@ -48,7 +44,7 @@ from typing import List, Optional, Tuple, Union
 import torch
 import torch.multiprocessing as mp
 import torch.nn as nn
-from lhotse.cut import Cut, CutSet
+from lhotse.cut import Cut
 from lhotse.utils import fix_random_seed
 from torch import Tensor
 from torch.amp.grad_scaler import GradScaler
@@ -57,16 +53,17 @@ from torch.optim import Optimizer
 from torch.utils.tensorboard import SummaryWriter
 
 import zipvoice.utils.diagnostics as diagnostics
-from zipvoice.dataset.datamodule import TtsDataModule
-from zipvoice.models.zipvoice import ZipVoice
-from zipvoice.tokenizer.tokenizer import (
-    EmiliaTokenizer,
-    EspeakTokenizer,
-    LibriTTSTokenizer,
-    SimpleTokenizer,
+from zipvoice.bin.train_zipvoice import (
+    display_and_save_batch,
+    get_params,
+    tokenize_text,
 )
+from zipvoice.dataset.datamodule import TtsDataModule
+from zipvoice.models.zipvoice_dialog import ZipVoiceDialogStereo
+from zipvoice.tokenizer.tokenizer import DialogTokenizer
 from zipvoice.utils.checkpoint import (
     load_checkpoint,
+    load_checkpoint_copy_proj_three_channel_alter,
     remove_checkpoints,
     resume_checkpoint,
     save_checkpoint,
@@ -79,7 +76,6 @@ from zipvoice.utils.common import (
     cleanup_dist,
     create_grad_scaler,
     get_adjusted_batch_count,
-    get_env_info,
     get_parameter_groups_with_lrs,
     prepare_input,
     set_batch_count,
@@ -89,7 +85,7 @@ from zipvoice.utils.common import (
     torch_autocast,
 )
 from zipvoice.utils.hooks import register_inf_check_hooks
-from zipvoice.utils.lr_scheduler import Eden, FixedLRScheduler, LRScheduler
+from zipvoice.utils.lr_scheduler import FixedLRScheduler, LRScheduler
 from zipvoice.utils.optim import ScaledAdam
 
 LRSchedulerType = Union[torch.optim.lr_scheduler._LRScheduler, LRScheduler]
@@ -124,14 +120,14 @@ def get_parser():
     parser.add_argument(
         "--num-epochs",
         type=int,
-        default=11,
+        default=8,
         help="Number of epochs to train.",
     )
 
     parser.add_argument(
         "--num-iters",
         type=int,
-        default=0,
+        default=25000,
         help="Number of iter to train, will ignore num_epochs if > 0.",
     )
 
@@ -148,15 +144,16 @@ def get_parser():
     parser.add_argument(
         "--checkpoint",
         type=str,
-        default=None,
-        help="""Checkpoints of pre-trained models, will load it if not None
+        required=True,
+        help="""Checkpoints of pre-trained models, either a ZipVoice model or a
+        ZipVoice-Dialog model.
         """,
     )
 
     parser.add_argument(
         "--exp-dir",
         type=str,
-        default="exp/zipvoice",
+        default="exp/zipvoice_dialog",
         help="""The experiment dir.
         It specifies the directory where all training related
         files, e.g., checkpoints, log, etc, are saved
@@ -164,32 +161,7 @@ def get_parser():
     )
 
     parser.add_argument(
-        "--base-lr", type=float, default=0.02, help="The base learning rate."
-    )
-
-    parser.add_argument(
-        "--lr-batches",
-        type=float,
-        default=7500,
-        help="""Number of steps that affects how rapidly the learning rate
-        decreases. We suggest not to change this.""",
-    )
-
-    parser.add_argument(
-        "--lr-epochs",
-        type=float,
-        default=10,
-        help="""Number of epochs that affects how rapidly the learning rate decreases.
-        """,
-    )
-
-    parser.add_argument(
-        "--lr-hours",
-        type=float,
-        default=0,
-        help="""If positive, --epoch is ignored and it specifies the number of hours
-        that affects how rapidly the learning rate decreases.
-        """,
+        "--base-lr", type=float, default=0.002, help="The base learning rate."
     )
 
     parser.add_argument(
@@ -205,8 +177,8 @@ def get_parser():
         "--finetune",
         type=str2bool,
         default=False,
-        help="Whether to use the fine-tuning mode, will used a fixed learning rate "
-        "schedule and skip the large dropout phase.",
+        help="Whether to fine-tune from our pre-traied ZipVoice-Dialog model."
+        "False means to fine-tune from a pre-trained ZipVoice model.",
     )
 
     parser.add_argument(
@@ -296,14 +268,6 @@ def get_parser():
     )
 
     parser.add_argument(
-        "--dataset",
-        type=str,
-        default="emilia",
-        choices=["emilia", "libritts", "custom"],
-        help="The used training dataset",
-    )
-
-    parser.add_argument(
         "--train-manifest",
         type=str,
         help="Path of the training manifest",
@@ -325,92 +289,26 @@ def get_parser():
     parser.add_argument(
         "--max-len",
         type=float,
-        default=30.0,
+        default=60.0,
         help="The maximum audio length used for training",
     )
 
     parser.add_argument(
         "--model-config",
         type=str,
-        default="conf/zipvoice_base.json",
+        default="zipvoice_base.json",
         help="The model configuration file.",
-    )
-
-    parser.add_argument(
-        "--tokenizer",
-        type=str,
-        default="emilia",
-        choices=["emilia", "libritts", "espeak", "simple"],
-        help="Tokenizer type.",
-    )
-
-    parser.add_argument(
-        "--lang",
-        type=str,
-        default="en-us",
-        help="Language identifier, used when tokenizer type is espeak. see"
-        "https://github.com/rhasspy/espeak-ng/blob/master/docs/languages.md",
     )
 
     parser.add_argument(
         "--token-file",
         type=str,
-        default="data/tokens_emilia.txt",
+        default="data/tokens_dialog.txt",
         help="The file that contains information that maps tokens to ids,"
         "which is a text file with '{token}\t{token_id}' per line.",
     )
 
     return parser
-
-
-def get_params() -> AttributeDict:
-    """Return a dict containing training parameters.
-
-    All training related parameters that are not passed from the commandline
-    are saved in the variable `params`.
-
-    Commandline options are merged into `params` after they are parsed, so
-    you can also access them via `params`.
-
-    Explanation of options saved in `params`:
-
-        - best_train_loss: Best training loss so far. It is used to select
-                           the model that has the lowest training loss. It is
-                           updated during the training.
-
-        - best_valid_loss: Best validation loss so far. It is used to select
-                           the model that has the lowest validation loss. It is
-                           updated during the training.
-
-        - best_train_epoch: It is the epoch that has the best training loss.
-
-        - best_valid_epoch: It is the epoch that has the best validation loss.
-
-        - batch_idx_train: Used to writing statistics to tensorboard. It
-                           contains number of batches trained so far across
-                           epochs.
-
-        - log_interval:  Print training loss if batch_idx % log_interval` is 0
-
-        - reset_interval: Reset statistics if batch_idx % reset_interval is 0
-
-        - env_info:  A dict containing information about the environment.
-
-    """
-    params = AttributeDict(
-        {
-            "best_train_loss": float("inf"),
-            "best_valid_loss": float("inf"),
-            "best_train_epoch": -1,
-            "best_valid_epoch": -1,
-            "batch_idx_train": 0,
-            "log_interval": 50,
-            "reset_interval": 200,
-            "env_info": get_env_info(),
-        }
-    )
-
-    return params
 
 
 def compute_fbank_loss(
@@ -420,6 +318,7 @@ def compute_fbank_loss(
     features_lens: Tensor,
     tokens: List[List[int]],
     is_training: bool,
+    use_two_channel: bool,
 ) -> Tuple[Tensor, MetricsTracker]:
     """
     Compute loss given the model and its inputs.
@@ -439,6 +338,8 @@ def compute_fbank_loss(
         True for training. False for validation. When it is True, this
         function enables autograd during computation; when it is False, it
         disables autograd.
+      use_two_channel:
+        True for using two channel features, False for using one channel features.
     """
 
     device = model.device if isinstance(model, DDP) else next(model.parameters()).device
@@ -448,6 +349,14 @@ def compute_fbank_loss(
     features = torch.nn.functional.pad(
         features, (0, 0, 0, num_frames - features.size(1))
     )  # (B, T, F)
+    assert (
+        features.size(2) == 3 * params.feat_dim
+    ), "we assume three channel features, the last channel is the mixed-channel feature"
+    if use_two_channel:
+        features = features[:, :, : params.feat_dim * 2]
+    else:
+        features = features[:, :, params.feat_dim * 2 :]
+
     noise = torch.randn_like(features)  # (B, T, F)
 
     # Sampling t from uniform distribution
@@ -468,6 +377,7 @@ def compute_fbank_loss(
             noise=noise,
             t=t,
             condition_drop_ratio=params.condition_drop_ratio,
+            se_weight=1 if use_two_channel else 0,
         )
 
     assert loss.requires_grad == is_training
@@ -545,10 +455,7 @@ def train_one_epoch(
     for batch_idx, batch in enumerate(train_dl):
 
         if batch_idx % 10 == 0:
-            if params.finetune:
-                set_batch_count(model, get_adjusted_batch_count(params) + 100000)
-            else:
-                set_batch_count(model, get_adjusted_batch_count(params))
+            set_batch_count(model, get_adjusted_batch_count(params) + 100000)
 
         if (
             params.batch_idx_train > 0
@@ -597,6 +504,7 @@ def train_one_epoch(
                     features_lens=features_lens,
                     tokens=tokens,
                     is_training=True,
+                    use_two_channel=(batch_idx % 2 == 1),
                 )
 
             tot_loss = (tot_loss * (1 - 1 / params.reset_interval)) + loss_info
@@ -604,14 +512,6 @@ def train_one_epoch(
             scaler.scale(loss).backward()
 
             scheduler.step_batch(params.batch_idx_train)
-            # Use the number of hours of speech to adjust the learning rate
-            if params.lr_hours > 0:
-                scheduler.step_epoch(
-                    params.batch_idx_train
-                    * params.max_duration
-                    * params.world_size
-                    / 3600
-                )
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad()
@@ -743,6 +643,7 @@ def compute_validation_loss(
             features_lens=features_lens,
             tokens=tokens,
             is_training=False,
+            use_two_channel=True,
         )
         assert loss.requires_grad is False
         tot_loss = tot_loss + loss_info
@@ -756,35 +657,6 @@ def compute_validation_loss(
         params.best_valid_loss = loss_value
 
     return tot_loss
-
-
-def display_and_save_batch(
-    batch: dict,
-    params: AttributeDict,
-) -> None:
-    """Display the batch statistics and save the batch into disk.
-
-    Args:
-      batch:
-        A batch of data. See `lhotse.dataset.K2SpeechRecognitionDataset()`
-        for the content in it.
-      params:
-        Parameters for training. See :func:`get_params`.
-      sp:
-        The BPE model.
-    """
-    from lhotse.utils import uuid4
-
-    filename = f"{params.exp_dir}/batch-{uuid4()}.pt"
-    logging.info(f"Saving batch to {filename}")
-    torch.save(batch, filename)
-
-    features = batch["features"]
-    tokens = batch["tokens"]
-
-    logging.info(f"features shape: {features.shape}")
-    num_tokens = sum(len(i) for i in tokens)
-    logging.info(f"num tokens: {num_tokens}")
 
 
 def scan_pessimistic_batches_for_oom(
@@ -820,6 +692,7 @@ def scan_pessimistic_batches_for_oom(
                     features_lens=features_lens,
                     tokens=tokens,
                     is_training=True,
+                    use_two_channel=True,
                 )
             loss.backward()
             optimizer.zero_grad()
@@ -838,15 +711,6 @@ def scan_pessimistic_batches_for_oom(
             f"Maximum memory allocated so far is "
             f"{torch.cuda.max_memory_allocated() // 1000000}MB"
         )
-
-
-def tokenize_text(c: Cut, tokenizer):
-    if hasattr(c.supervisions[0], "tokens"):
-        tokens = tokenizer.tokens_to_token_ids([c.supervisions[0].tokens])
-    else:
-        tokens = tokenizer.texts_to_token_ids([c.supervisions[0].text])
-    c.supervisions[0].tokens = tokens[0]
-    return c
 
 
 def run(rank, world_size, args):
@@ -892,31 +756,39 @@ def run(rank, world_size, args):
         params.device = torch.device("cpu")
     logging.info(f"Device: {params.device}")
 
-    if params.tokenizer == "emilia":
-        tokenizer = EmiliaTokenizer(token_file=params.token_file)
-    elif params.tokenizer == "libritts":
-        tokenizer = LibriTTSTokenizer(token_file=params.token_file)
-    elif params.tokenizer == "espeak":
-        tokenizer = EspeakTokenizer(token_file=params.token_file, lang=params.lang)
-    else:
-        assert params.tokenizer == "simple"
-        tokenizer = SimpleTokenizer(token_file=params.token_file)
-
-    tokenizer_config = {"vocab_size": tokenizer.vocab_size, "pad_id": tokenizer.pad_id}
+    tokenizer = DialogTokenizer(token_file=params.token_file)
+    tokenizer_config = {
+        "vocab_size": tokenizer.vocab_size,
+        "pad_id": tokenizer.pad_id,
+        "spk_a_id": tokenizer.spk_a_id,
+        "spk_b_id": tokenizer.spk_a_id,
+    }
     params.update(tokenizer_config)
 
     logging.info(params)
 
     logging.info("About to create model")
 
-    model = ZipVoice(
+    model = ZipVoiceDialogStereo(
         **model_config["model"],
         **tokenizer_config,
     )
 
-    if params.checkpoint is not None:
-        logging.info(f"Loading pre-trained model from {params.checkpoint}")
+    assert params.checkpoint is not None
+    logging.info(f"Loading pre-trained model from {params.checkpoint}")
+
+    if params.finetune:
+        # load a pre-trained ZipVoice-Dialog-Stereo model
         _ = load_checkpoint(filename=params.checkpoint, model=model, strict=True)
+    else:
+        # load a pre-trained ZipVoice-Dialog model, duplicate the proj layers
+        load_checkpoint_copy_proj_three_channel_alter(
+            filename=params.checkpoint,
+            in_proj_key="fm_decoder.in_proj",
+            out_proj_key="fm_decoder.out_proj",
+            dim=params.feat_dim,
+            model=model,
+        )
     num_param = sum([p.numel() for p in model.parameters()])
     logging.info(f"Number of parameters : {num_param}")
 
@@ -944,14 +816,7 @@ def run(rank, world_size, args):
         clipping_scale=2.0,
     )
 
-    assert params.lr_hours >= 0
-
-    if params.finetune:
-        scheduler = FixedLRScheduler(optimizer)
-    elif params.lr_hours > 0:
-        scheduler = Eden(optimizer, params.lr_batches, params.lr_hours)
-    else:
-        scheduler = Eden(optimizer, params.lr_batches, params.lr_epochs)
+    scheduler = FixedLRScheduler(optimizer)
 
     scaler = create_grad_scaler(enabled=params.use_fp16)
 
@@ -989,38 +854,19 @@ def run(rank, world_size, args):
     )
 
     datamodule = TtsDataModule(args)
-    if params.dataset == "emilia":
-        train_cuts = CutSet.mux(
-            datamodule.train_emilia_EN_cuts(),
-            datamodule.train_emilia_ZH_cuts(),
-            weights=[46000, 49000],
-        )
-        train_cuts = train_cuts.filter(_remove_short_and_long_utt)
-        dev_cuts = CutSet.mux(
-            datamodule.dev_emilia_EN_cuts(),
-            datamodule.dev_emilia_ZH_cuts(),
-            weights=[0.5, 0.5],
-        )
-    elif params.dataset == "libritts":
-        train_cuts = datamodule.train_libritts_cuts()
-        train_cuts = train_cuts.filter(_remove_short_and_long_utt)
-        dev_cuts = datamodule.dev_libritts_cuts()
-    else:
-        assert params.dataset == "custom"
-        train_cuts = datamodule.train_custom_cuts(params.train_manifest)
-        train_cuts = train_cuts.filter(_remove_short_and_long_utt)
-        dev_cuts = datamodule.dev_custom_cuts(params.dev_manifest)
-        # To avoid OOM issues due to too long dev cuts
-        dev_cuts = dev_cuts.filter(_remove_short_and_long_utt)
+    train_cuts = datamodule.train_custom_cuts(params.train_manifest)
+    train_cuts = train_cuts.filter(_remove_short_and_long_utt)
+    dev_cuts = datamodule.dev_custom_cuts(params.dev_manifest)
+    # To avoid OOM issues due to too long dev cuts
+    dev_cuts = dev_cuts.filter(_remove_short_and_long_utt)
 
-    if params.tokenizer in ["emilia", "espeak", "dialog"]:
-        if not hasattr(train_cuts[0].supervisions[0], "tokens") or not hasattr(
-            dev_cuts[0].supervisions[0], "tokens"
-        ):
-            logging.warning(
-                f"Using {params.tokenizer} tokenizer but tokens are not prepared,"
-                f"will tokenize on-the-fly, which can slow down training significantly."
-            )
+    if not hasattr(train_cuts[0].supervisions[0], "tokens") or not hasattr(
+        dev_cuts[0].supervisions[0], "tokens"
+    ):
+        logging.warning(
+            "Tokens are not prepared, will tokenize on-the-fly, "
+            "which can slow down training significantly."
+        )
     _tokenize_text = partial(tokenize_text, tokenizer=tokenizer)
     train_cuts = train_cuts.map(_tokenize_text)
     dev_cuts = dev_cuts.map(_tokenize_text)
@@ -1041,9 +887,7 @@ def run(rank, world_size, args):
 
     for epoch in range(params.start_epoch, params.num_epochs + 1):
         logging.info(f"Start epoch {epoch}")
-
-        if params.lr_hours == 0:
-            scheduler.step_epoch(epoch - 1)
+        scheduler.step_epoch(epoch - 1)
         fix_random_seed(params.seed + epoch - 1)
         train_dl.sampler.set_epoch(epoch - 1)
 

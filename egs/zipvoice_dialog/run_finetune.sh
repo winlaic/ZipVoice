@@ -1,6 +1,7 @@
 #!/bin/bash
 
-# This script is an example of fine-tuning ZipVoice on your custom datasets.
+# This script is an example of fine-tune our pre-trained ZipVoice-Dialog on your custom datasets.
+# Only support English and Chinese for now.
 
 # Add project root to PYTHONPATH
 export PYTHONPATH=../../:$PYTHONPATH
@@ -16,30 +17,8 @@ stop_stage=6
 
 # Number of jobs for data preparation
 nj=20
-
-# Whether the language of training data is one of Chinese and English
-is_zh_en=1
-
-# Language identifier, used when language is not Chinese or English
-# see https://github.com/rhasspy/espeak-ng/blob/master/docs/languages.md
-# Example of French: lang=fr
-lang=default
-
-if [ $is_zh_en -eq 1 ]; then
-      tokenizer=emilia
-else
-      tokenizer=espeak
-      [ "$lang" = "default" ] && { echo "Error: lang is not set!" >&2; exit 1; }
-fi
-
-# You can set `max_len` according to statistics from the command 
-# `lhotse cut describe data/fbank/custom_cuts_train.jsonl.gz`.
-# Set `max_len` to 99% duration.
-
 # Maximum length (seconds) of the training utterance, will filter out longer utterances
-max_len=20
-
-# Download directory for pre-trained models
+max_len=60
 download_dir=download/
 
 # We suppose you have two TSV files: "data/raw/custom_train.tsv" and 
@@ -52,12 +31,12 @@ download_dir=download/
 #     to part of the wav. The start_time and end_time specify the start and end
 #     times of the text within the wav, which should be in seconds.
 # > Note: {uniq_id} must be unique for each line.
+# > Note: {text} uses [S1] and [S2] tags to distinguish speakers, and must be begin with [S1].
+# > eg: "[S1] Hello. [S2] How are you? [S1] I'm fine. [S2] What's your name?"
 for subset in train dev;do
       file_path=data/raw/custom_${subset}.tsv
       [ -f "$file_path" ] || { echo "Error: expect $file_path !" >&2; exit 1; }
 done
-
-### Prepare the training data (1 - 4)
 
 if [ ${stage} -le 1 ] && [ ${stop_stage} -ge 1 ]; then
       echo "Stage 1: Prepare manifests for custom dataset from tsv files"
@@ -77,14 +56,11 @@ fi
 
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
       echo "Stage 2: Add tokens to manifests"
-      # For "emilia" and "espeak" tokenizers, it's better to prepare the tokens 
-      # before training. Otherwise, the on-the-fly tokenization can significantly
-      # slow down the training.
       for subset in train dev;do
             python3 -m zipvoice.bin.prepare_tokens \
                   --input-file data/manifests/custom-finetune_cuts_raw_${subset}.jsonl.gz \
                   --output-file data/manifests/custom-finetune_cuts_${subset}.jsonl.gz \
-                  --tokenizer ${tokenizer}
+                  --tokenizer dialog
       done
       # The output manifest files are "data/manifests/custom-finetune_cuts_train.jsonl.gz".
       # and "data/manifests/custom-finetune_cuts_dev.jsonl.gz".
@@ -107,24 +83,20 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
       echo "Stage 4: Download pre-trained model, tokens file, and model config"
       # Uncomment this line to use HF mirror
       # export HF_ENDPOINT=https://hf-mirror.com
-      hf_repo=k2-fsa/ZipVoice
+
       mkdir -p ${download_dir}
+      hf_repo=k2-fsa/ZipVoice
       for file in model.pt tokens.txt model.json; do
             huggingface-cli download \
                   --local-dir ${download_dir} \
                   ${hf_repo} \
-                  zipvoice/${file}
+                  zipvoice_dialog/${file}
       done
 fi
 
-### Training ZipVoice (5 - 6)
-
 if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
-      echo "Stage 5: Fine-tune the ZipVoice model"
-
-      [ -z "$max_len" ] && { echo "Error: max_len is not set!" >&2; exit 1; }
-
-      python3 -m zipvoice.bin.train_zipvoice \
+      echo "Stage 5: Fine-tune the ZipVoice-Dialog model"
+      python3 -m zipvoice.bin.train_zipvoice_dialog \
             --world-size 4 \
             --use-fp16 1 \
             --finetune 1 \
@@ -133,16 +105,13 @@ if [ ${stage} -le 5 ] && [ ${stop_stage} -ge 5 ]; then
             --save-every-n 1000 \
             --max-duration 500 \
             --max-len ${max_len} \
-            --model-config ${download_dir}/zipvoice/model.json \
-            --checkpoint ${download_dir}/zipvoice/model.pt \
-            --tokenizer ${tokenizer} \
-            --lang ${lang} \
-            --token-file ${download_dir}/zipvoice/tokens.txt \
+            --checkpoint ${download_dir}/zipvoice_dialog/model.pt \
+            --model-config ${download_dir}/zipvoice_dialog/model.json \
+            --token-file ${download_dir}/zipvoice_dialog/tokens.txt \
             --dataset custom \
             --train-manifest data/fbank/custom-finetune_cuts_train.jsonl.gz \
             --dev-manifest data/fbank/custom-finetune_cuts_dev.jsonl.gz \
-            --exp-dir exp/zipvoice_finetune
-
+            --exp-dir exp/zipvoice_dialog_finetune
 fi
 
 if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
@@ -150,23 +119,17 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
       python3 -m zipvoice.bin.generate_averaged_model \
             --iter 10000 \
             --avg 2 \
-            --model-name zipvoice \
-            --exp-dir exp/zipvoice_finetune
-      # The generated model is exp/zipvoice_finetune/iter-10000-avg-2.pt
+            --model-name zipvoice_dialog \
+            --exp-dir exp/zipvoice_dialog_finetune
+      # The generated model is exp/zipvoice_dialog_finetune/iter-10000-avg-2.pt
 fi
-
-### Inference with PyTorch models (7)
 
 if [ ${stage} -le 7 ] && [ ${stop_stage} -ge 7 ]; then
       echo "Stage 7: Inference of the ZipVoice model"
-
-      python3 -m zipvoice.bin.infer_zipvoice \
-            --model-name zipvoice \
-            --model-dir exp/zipvoice_finetune/ \
+      python3 -m zipvoice.bin.infer_zipvoice_dialog \
+            --model-name zipvoice_dialog \
+            --model-dir exp/zipvoice_dialog_finetune \
             --checkpoint-name iter-10000-avg-2.pt \
-            --tokenizer ${tokenizer} \
-            --lang ${lang} \
             --test-list test.tsv \
-            --res-dir results/test_finetune\
-            --num-step 16
+            --res-dir results/test_dialog_finetune
 fi
