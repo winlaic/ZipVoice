@@ -33,6 +33,7 @@ if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
             --max-duration 250 \
             --lr-epochs 10 \
             --max-len 20 \
+            --valid-by-epoch 1 \
             --model-config conf/zipvoice_base.json \
             --tokenizer libritts \
             --token-file data/tokens_libritts.txt \
@@ -62,6 +63,7 @@ if [ ${stage} -le 4 ] && [ ${stop_stage} -ge 4 ]; then
             --max-duration 250 \
             --base-lr 0.001 \
             --max-len 20 \
+            --valid-by-epoch 1 \
             --model-config conf/zipvoice_base.json \
             --tokenizer libritts \
             --token-file data/tokens_libritts.txt \
@@ -93,6 +95,7 @@ if [ ${stage} -le 6 ] && [ ${stop_stage} -ge 6 ]; then
             --max-duration 250 \
             --base-lr 0.001 \
             --max-len 20 \
+            --valid-by-epoch 1 \
             --model-config conf/zipvoice_base.json \
             --tokenizer libritts \
             --token-file data/tokens_libritts.txt \
@@ -127,7 +130,6 @@ if [ ${stage} -le 8 ] && [ ${stop_stage} -ge 8 ]; then
             --res-dir results/test_libritts \
             --num-step 8 \
             --guidance-scale 1 \
-            --target-rms 0 \
             --t-shift 0.7
 fi
 
@@ -143,6 +145,5 @@ if [ ${stage} -le 9 ] && [ ${stop_stage} -ge 9 ]; then
             --res-dir results/test_distill_libritts \
             --num-step 4 \
             --guidance-scale 3 \
-            --target-rms 0 \
             --t-shift 0.7
 fi
