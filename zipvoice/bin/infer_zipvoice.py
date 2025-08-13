@@ -75,7 +75,7 @@ from zipvoice.tokenizer.tokenizer import (
 )
 from zipvoice.utils.checkpoint import load_checkpoint
 from zipvoice.utils.common import AttributeDict
-from zipvoice.utils.feature import VocosFbank
+from zipvoice.utils.feature import VocosFbank, BigVGANFbank
 
 HUGGINGFACE_REPO = "k2-fsa/ZipVoice"
 MODEL_DIR = {
@@ -207,6 +207,13 @@ def get_parser():
         default=0.1,
         help="The scale factor of fbank feature",
     )
+    
+    parser.add_argument(
+        '--feat-bias',
+        type=float,
+        default=0.0,
+        help="The bias added to fbank feature",
+    )
 
     parser.add_argument(
         "--speed",
@@ -239,17 +246,30 @@ def get_parser():
     return parser
 
 
-def get_vocoder(vocos_local_path: Optional[str] = None):
-    if vocos_local_path:
-        vocoder = Vocos.from_hparams(f"{vocos_local_path}/config.yaml")
-        state_dict = torch.load(
-            f"{vocos_local_path}/pytorch_model.bin",
-            weights_only=True,
-            map_location="cpu",
-        )
-        vocoder.load_state_dict(state_dict)
+def get_vocoder(vocos_local_path: Optional[str] = None, type: str = "vocos"):
+    if type == "vocos":
+        if vocos_local_path:
+            vocoder = Vocos.from_hparams(f"{vocos_local_path}/config.yaml")
+            state_dict = torch.load(
+                f"{vocos_local_path}/pytorch_model.bin",
+                weights_only=True,
+                map_location="cpu",
+            )
+            vocoder.load_state_dict(state_dict)
+        else:
+            vocoder = Vocos.from_pretrained("charactr/vocos-mel-24khz")
+    elif type == "bigvgan_v2":
+        import bigvgan
+        import types
+        vocoder = bigvgan.BigVGAN.from_pretrained('nvidia/bigvgan_v2_24khz_100band_256x', use_cuda_kernel=False)
+        vocoder.remove_weight_norm()
+        @torch.inference_mode()
+        def decode(self, features_input: torch.Tensor):
+            return self(features_input)
+        vocoder.decode = types.MethodType(decode, vocoder)
     else:
-        vocoder = Vocos.from_pretrained("charactr/vocos-mel-24khz")
+        raise NotImplementedError(f"Unsupported vocoder type: {type}")
+    
     return vocoder
 
 
@@ -269,6 +289,7 @@ def generate_sentence(
     t_shift: float = 0.5,
     target_rms: float = 0.1,
     feat_scale: float = 0.1,
+    feat_bias: float = 0.0,
     sampling_rate: int = 24000,
 ):
     """
@@ -295,6 +316,8 @@ def generate_sentence(
             Defaults to 0.1.
         feat_scale (float, optional): Scale for features.
             Defaults to 0.1.
+        feat_bias (float, optional): Bias added to features.
+            Defaults to 0.0.
         sampling_rate (int, optional): Sampling rate for the waveform.
             Defaults to 24000.
     Returns:
@@ -323,7 +346,7 @@ def generate_sentence(
         prompt_wav, sampling_rate=sampling_rate
     ).to(device)
 
-    prompt_features = prompt_features.unsqueeze(0) * feat_scale
+    prompt_features = (prompt_features.unsqueeze(0) + feat_bias) * feat_scale  # (1, T, C)
     prompt_features_lens = torch.tensor([prompt_features.size(1)], device=device)
 
     # Start timing
@@ -348,7 +371,7 @@ def generate_sentence(
     )
 
     # Postprocess predicted features
-    pred_features = pred_features.permute(0, 2, 1) / feat_scale  # (B, C, T)
+    pred_features = pred_features.permute(0, 2, 1) / feat_scale - feat_bias  # (B, C, T)
 
     # Start vocoder processing
     start_vocoder_t = dt.datetime.now()
@@ -394,6 +417,7 @@ def generate_list(
     t_shift: float = 0.5,
     target_rms: float = 0.1,
     feat_scale: float = 0.1,
+    feat_bias: float = 0.0,
     sampling_rate: int = 24000,
 ):
     total_t = []
@@ -423,6 +447,7 @@ def generate_list(
             t_shift=t_shift,
             target_rms=target_rms,
             feat_scale=feat_scale,
+            feat_bias=feat_bias,
             sampling_rate=sampling_rate,
         )
         logging.info(f"[Sentence: {i}] RTF: {metrics['rtf']:.4f}")
@@ -551,12 +576,14 @@ def main():
     model = model.to(params.device)
     model.eval()
 
-    vocoder = get_vocoder(params.vocoder_path)
+    vocoder = get_vocoder(params.vocoder_path, type=model_config["feature"]["type"])
     vocoder = vocoder.to(params.device)
     vocoder.eval()
 
     if model_config["feature"]["type"] == "vocos":
         feature_extractor = VocosFbank()
+    elif model_config["feature"]["type"] == "bigvgan_v2":
+        feature_extractor = BigVGANFbank()
     else:
         raise NotImplementedError(
             f"Unsupported feature type: {model_config['feature']['type']}"
@@ -580,6 +607,7 @@ def main():
             t_shift=params.t_shift,
             target_rms=params.target_rms,
             feat_scale=params.feat_scale,
+            feat_bias=params.feat_bias,
             sampling_rate=params.sampling_rate,
         )
     else:
@@ -599,6 +627,7 @@ def main():
             t_shift=params.t_shift,
             target_rms=params.target_rms,
             feat_scale=params.feat_scale,
+            feat_bias=params.feat_bias,
             sampling_rate=params.sampling_rate,
         )
     logging.info("Done")

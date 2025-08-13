@@ -11,8 +11,8 @@ set -e
 set -u
 set -o pipefail
 
-stage=1
-stop_stage=9
+stage=2
+stop_stage=3
 
 #### Prepare datasets (1)
 
@@ -26,8 +26,9 @@ fi
 if [ ${stage} -le 2 ] && [ ${stop_stage} -ge 2 ]; then
       echo "Stage 2: Train the ZipVoice model"
       python3 -m zipvoice.bin.train_zipvoice \
-            --world-size 8 \
+            --world-size 4 \
             --use-fp16 0 \
+            --start-epoch 20 \
             --num-epochs 60 \
             --max-duration 250 \
             --lr-epochs 10 \

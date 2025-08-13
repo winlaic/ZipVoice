@@ -287,6 +287,13 @@ def get_parser():
         default=0.1,
         help="The scale factor of fbank feature",
     )
+    
+    parser.add_argument(
+        "--feat-bias",
+        type=float,
+        default=0.0,
+        help="The bias added to fbank feature",
+    )
 
     parser.add_argument(
         "--condition-drop-ratio",

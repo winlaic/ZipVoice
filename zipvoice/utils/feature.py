@@ -23,7 +23,7 @@ import torch
 import torchaudio
 from lhotse.features.base import FeatureExtractor, register_extractor
 from lhotse.utils import Seconds, compute_num_frames
-
+from zipvoice.utils._bigvgan_mel_feature import mel_spectrogram as bigvgan_mel_spectrogram
 
 @dataclass
 class VocosFbankConfig:
@@ -118,3 +118,87 @@ class VocosFbank(FeatureExtractor):
     @property
     def frame_shift(self) -> Seconds:
         return self.config.hop_length / self.config.sampling_rate
+
+@dataclass
+class BigVGANFbankConfig:
+    n_fft: int = 1024
+    num_mels: int = 100
+    sampling_rate: int = 24000
+    hop_size: int = 256
+    win_size: int = 1024
+    fmin: int = 0
+    fmax: int = None # 12000 for bigvgan v1.
+    
+    
+@register_extractor
+class BigVGANFbank(FeatureExtractor):
+    config_type = BigVGANFbankConfig
+    name = "BigVGANFbank"
+    def __init__(self, num_channels: int = 1):
+        config = BigVGANFbankConfig
+        super().__init__(config=config)
+        assert num_channels in (1, 2)
+        self.num_channels = num_channels
+        
+    def feature_dim(self, sampling_rate: int) -> int:
+        return self.config.num_mels * self.num_channels
+    
+    @property
+    def frame_shift(self) -> Seconds:
+        return self.config.hop_size / self.config.sampling_rate
+        
+    def extract(self, samples, sampling_rate):
+        # samples: (channel, time) or (time,)
+        # Check for sampling rate compatibility.
+        expected_sr = self.config.sampling_rate
+        assert sampling_rate == expected_sr, (
+            f"Mismatched sampling rate: extractor expects {expected_sr}, "
+            f"got {sampling_rate}"
+        )
+        is_numpy = False
+        if not isinstance(samples, torch.Tensor):
+            samples = torch.from_numpy(samples)
+            is_numpy = True
+
+        if len(samples.shape) == 1:
+            samples = samples.unsqueeze(0)
+        else:
+            assert samples.ndim == 2, samples.shape
+
+        if self.num_channels == 1:
+            if samples.shape[0] == 2:
+                samples = samples.mean(dim=0, keepdims=True)
+        else:
+            assert samples.shape[0] == 2, samples.shape
+
+        mel = bigvgan_mel_spectrogram(
+            samples,
+            n_fft=self.config.n_fft,
+            num_mels=self.config.num_mels,
+            sampling_rate=self.config.sampling_rate,
+            hop_size=self.config.hop_size,
+            win_size=self.config.win_size,
+            fmin=self.config.fmin,
+            fmax=self.config.fmax,
+            center=False,
+        )
+        # (1, n_mels, time) or (2, n_mels, time)
+        mel = mel.reshape(-1, mel.shape[-1]).t()
+        # (time, n_mels) or (time, 2 * n_mels)
+
+        num_frames = compute_num_frames(
+            samples.shape[1] / sampling_rate, self.frame_shift, sampling_rate
+        )
+
+        if mel.shape[0] > num_frames:
+            mel = mel[:num_frames]
+        elif mel.shape[0] < num_frames:
+            mel = mel.unsqueeze(0)
+            mel = torch.nn.functional.pad(
+                mel, (0, 0, 0, num_frames - mel.shape[1]), mode="replicate"
+            ).squeeze(0)
+
+        if is_numpy:
+            return mel.cpu().numpy()
+        else:
+            return mel

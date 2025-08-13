@@ -42,7 +42,7 @@ import torch
 from lhotse import CutSet, LilcomChunkyWriter, load_manifest_lazy
 
 from zipvoice.utils.common import str2bool
-from zipvoice.utils.feature import VocosFbank
+from zipvoice.utils.feature import VocosFbank, BigVGANFbank
 
 # Torch's multithreaded behavior needs to be disabled or
 # it wastes a lot of CPU and slow things down.
@@ -152,6 +152,8 @@ def compute_fbank_split_single(params, idx):
     num_digits = 8
     if params.type == "vocos":
         extractor = VocosFbank()
+    elif params.type == "bigvgan_v2":
+        extractor = BigVGANFbank()
     else:
         raise NotImplementedError(f"{params.type} is not supported")
 
@@ -240,6 +242,8 @@ def compute_fbank(params):
     cut_set = cut_set.resample(params.sampling_rate)
     if params.type == "vocos":
         extractor = VocosFbank()
+    elif params.type == "bigvgan_v2":
+        extractor = BigVGANFbank()
     else:
         raise NotImplementedError(f"{params.type} is not supported")
 

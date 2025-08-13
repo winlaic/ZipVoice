@@ -6,10 +6,11 @@ export PYTHONPATH=../../:$PYTHONPATH
 
 set -eou pipefail
 
-stage=0
+stage=1
 stop_stage=5
 sampling_rate=24000
-nj=20
+nj=32
+feature_type=bigvgan_v2
 
 dl_dir=$PWD/download
 
@@ -55,38 +56,41 @@ if [ $stage -le 1 ] && [ $stop_stage -ge 1 ]; then
   fi
 fi
 
+feature_dir=data/fbank-${feature_type}
+
 if [ $stage -le 2 ] && [ $stop_stage -ge 2 ]; then
   log "Stage 2: Compute Fbank for LibriTTS"
-  mkdir -p data/fbank
+  mkdir -p $feature_dir
 
-  if [ ! -e data/fbank/.libritts.done ]; then
+  if [ ! -e $feature_dir/.libritts.done ]; then
     for subset in train-clean-100 train-clean-360 train-other-500 dev-clean test-clean; do
       python3 -m zipvoice.bin.compute_fbank \
         --source-dir data/manifests \
-        --dest-dir data/fbank \
+        --dest-dir $feature_dir \
         --dataset libritts \
         --subset ${subset} \
         --sampling-rate $sampling_rate \
-        --num-jobs ${nj}
+        --num-jobs ${nj} \
+        --type $feature_type
     done
-    touch data/fbank/.libritts.done
+    touch $feature_dir/.libritts.done
   fi
 
   # Here we shuffle and combine the train-clean-100, train-clean-360 and
   # train-other-500 together to form the training set.
-  if [ ! -f data/fbank/libritts_cuts_train-all-shuf.jsonl.gz ]; then
-    cat <(gunzip -c data/fbank/libritts_cuts_train-clean-100.jsonl.gz) \
-      <(gunzip -c data/fbank/libritts_cuts_train-clean-360.jsonl.gz) \
-      <(gunzip -c data/fbank/libritts_cuts_train-other-500.jsonl.gz) | \
-      shuf | gzip -c > data/fbank/libritts_cuts_train-all-shuf.jsonl.gz
+  if [ ! -f $feature_dir/libritts_cuts_train-all-shuf.jsonl.gz ]; then
+    cat <(gunzip -c $feature_dir/libritts_cuts_train-clean-100.jsonl.gz) \
+      <(gunzip -c $feature_dir/libritts_cuts_train-clean-360.jsonl.gz) \
+      <(gunzip -c $feature_dir/libritts_cuts_train-other-500.jsonl.gz) | \
+      shuf | gzip -c > $feature_dir/libritts_cuts_train-all-shuf.jsonl.gz
   fi
 
 
-  if [ ! -e data/fbank/.libritts-validated.done ]; then
-    log "Validating data/fbank for LibriTTS"
+  if [ ! -e $feature_dir/.libritts-validated.done ]; then
+    log "Validating $feature_dir for LibriTTS"
     python3 ./utils/validate_manifest.py \
-      data/fbank/libritts_cuts_train-all-shuf.jsonl.gz
-    touch data/fbank/.libritts-validated.done
+      $feature_dir/libritts_cuts_train-all-shuf.jsonl.gz
+    touch $feature_dir/.libritts-validated.done
   fi
 fi
 
@@ -94,7 +98,7 @@ if [ $stage -le 3 ] && [ $stop_stage -ge 3 ]; then
   log "Stage 3: Generate token file"
   if [ ! -e data/tokens_libritts.txt ]; then
     python3 ./local/prepare_token_file_char.py \
-      --manifest data/fbank/libritts_cuts_train-all-shuf.jsonl.gz \
+      --manifest $feature_dir/libritts_cuts_train-all-shuf.jsonl.gz \
       --tokens data/tokens_libritts.txt
   fi
 fi

@@ -234,7 +234,7 @@ def prepare_input(
     if return_feature:
         features = batch["features"].to(device)
         features_lens = batch["features_lens"].to(device)
-        return_list += [features * params.feat_scale, features_lens]
+        return_list += [(features + params.feat_bias) * params.feat_scale , features_lens]
 
     if return_audio:
         return_list += [batch["audio"], batch["audio_lens"]]
